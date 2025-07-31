@@ -1,24 +1,24 @@
 -- ⚙️ Servicios
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
--- 🧠 Variables de estado
+-- 🧠 Estados
 local autoPunchEnabled = false
 local autoKillEnabled = false
 local godModeEnabled = false
 
--- 🥊 Función para activar el botón de puño del juego
+-- 🥊 Función para activar botón de puño del juego
 local function clickPunchButton()
     for _, gui in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
         if gui:IsA("ImageButton") and gui.Name:lower():find("punch") then
-            gui:Activate()
+            pcall(function() gui:Activate() end)
         end
     end
 end
 
--- 🔁 Auto-punch loop (golpes + botón visual)
+-- 🔁 Auto-punch loop
 task.spawn(function()
     while true do
         if autoPunchEnabled then
@@ -50,7 +50,8 @@ end)
 LocalPlayer.CharacterAdded:Connect(function(char)
     char:WaitForChild("Humanoid").Died:Connect(function()
         if godModeEnabled then
-            char:BreakJoints() -- revive instantáneo
+            task.wait(0.1)
+            char:BreakJoints()
         end
     end)
 end)
@@ -79,7 +80,7 @@ title.Font = Enum.Font.SourceSansBold
 title.TextSize = 18
 
 -- 🔘 Botón con estado visual
-local function createToggleButton(text, yPos, stateGetter, stateSetter)
+local function createToggleButton(text, yPos, stateVar)
     local btn = Instance.new("TextButton", frame)
     btn.Size = UDim2.new(0.9, 0, 0, 35)
     btn.Position = UDim2.new(0.05, 0, 0, yPos)
@@ -88,35 +89,29 @@ local function createToggleButton(text, yPos, stateGetter, stateSetter)
     btn.Font = Enum.Font.SourceSansBold
     btn.TextSize = 16
 
-    local function updateText()
-        btn.Text = text .. " [" .. (stateGetter() and "ON" or "OFF") .. "]"
-        btn.BackgroundColor3 = stateGetter() and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
+    local function update()
+        btn.Text = text .. " [" .. (stateVar.value and "ON" or "OFF") .. "]"
+        btn.BackgroundColor3 = stateVar.value and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
     end
 
     btn.MouseButton1Click:Connect(function()
-        stateSetter(not stateGetter())
-        updateText()
+        stateVar.value = not stateVar.value
+        update()
     end)
 
-    updateText()
+    update()
 end
 
--- 🥊 Toggle Auto-Punch
-createToggleButton("🥊 Auto-Punch", 40,
-    function() return autoPunchEnabled end,
-    function(val) autoPunchEnabled = val end)
+-- 🥊 Auto-Punch
+createToggleButton("🥊 Auto-Punch", 40, {value = autoPunchEnabled, set = function(v) autoPunchEnabled = v end})
 
--- 💀 Toggle Auto-Kill
-createToggleButton("💀 Auto-Kill", 85,
-    function() return autoKillEnabled end,
-    function(val) autoKillEnabled = val end)
+-- 💀 Auto-Kill
+createToggleButton("💀 Auto-Kill", 85, {value = autoKillEnabled, set = function(v) autoKillEnabled = v end})
 
--- 🛡️ Toggle God Mode
-createToggleButton("🛡️ God Mode", 130,
-    function() return godModeEnabled end,
-    function(val) godModeEnabled = val end)
+-- 🛡️ God Mode
+createToggleButton("🛡️ God Mode", 130, {value = godModeEnabled, set = function(v) godModeEnabled = v end})
 
--- ❌ Botón para cerrar panel
+-- ❌ Cerrar panel
 local closeBtn = Instance.new("TextButton", frame)
 closeBtn.Size = UDim2.new(0.9, 0, 0, 30)
 closeBtn.Position = UDim2.new(0.05, 0, 0, 175)
@@ -128,3 +123,4 @@ closeBtn.TextSize = 16
 closeBtn.MouseButton1Click:Connect(function()
     screenGui:Destroy()
 end)
+
