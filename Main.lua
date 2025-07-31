@@ -6,11 +6,11 @@ setreadonly(mt, false)
 mt.__namecall = newcclosure(function(self, ...)
     local method = getnamecallmethod()
     if method == "FireServer" then
-        print("[FireServer detectado] →", self:GetFullName(), ...)
+        print("[FireServer detected] →", self:GetFullName(), ...)
     end
     return namecall(self, ...)
 end)
 
 mt.__index = newcclosure(function(self, key)
-    return index(self, key) -- no imprime para no saturar
+    return index(self, key) -- avoids saturation
 end)
