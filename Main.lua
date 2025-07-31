@@ -14,3 +14,4 @@ end)
 mt.__index = newcclosure(function(self, key)
     return index(self, key) -- avoids saturation
 end)
+
