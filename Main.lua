@@ -1,11 +1,6 @@
-for _,v in pairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
-    if v:IsA("RemoteEvent") then
-        v.OnClientEvent:Connect(function(...)
-            print("📡 RemoteEvent:", v.Name, ...)
-        end)
-    elseif v:IsA("RemoteFunction") then
-        v.OnClientInvoke = function(...)
-            print("📡 RemoteFunction:", v.Name, ...)
-        end
-    end
+local remote = game:GetService("ReplicatedStorage"):WaitForChild("guiDamageEvent")
+
+while true do
+    remote:FireServer("punchTrails", "handTrail", "leftHand")
+    wait() -- 1 milisegundo (o lo más rápido que permita tu FPS)
 end
