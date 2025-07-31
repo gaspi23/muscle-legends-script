@@ -1,16 +1,16 @@
 local mt = getrawmetatable(game)
+local namecall = mt.__namecall
+local index = mt.__index
 setreadonly(mt, false)
-local old_index = mt.__index
-local old_namecall = mt.__namecall
-
-mt.__index = newcclosure(function(self, key)
-    print("[Index acceso]", self:GetFullName(), "→", key)
-    return old_index(self, key)
-end)
 
 mt.__namecall = newcclosure(function(self, ...)
-    local args = {...}
     local method = getnamecallmethod()
-    print("[Namecall → " .. method .. "]", self:GetFullName(), unpack(args))
-    return old_namecall(self, unpack(args))
+    if method == "FireServer" then
+        print("[FireServer detectado] →", self:GetFullName(), ...)
+    end
+    return namecall(self, ...)
+end)
+
+mt.__index = newcclosure(function(self, key)
+    return index(self, key) -- no imprime para no saturar
 end)
