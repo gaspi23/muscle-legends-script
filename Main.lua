@@ -1,53 +1,50 @@
-@everyone arbix cant stop getting leaked
+print("Dupe GUI cargado correctamente")
 
-print("Dupe working")
-local _call4 = Instance.new("ScreenGui")
-_call4.Name = "DupeNotif"
-_call4.ResetOnSpawn = false
-_call4.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-local _call11 = Instance.new("TextLabel")
-_call11.Size = UDim2.new(0, 200, 0, 50)
-_call11.Position = UDim2.new(0.5, - 50, 0.9, 0)
-_call11.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-_call11.BackgroundTransparency = 0.3
-_call11.TextColor3 = Color3.fromRGB(0, 255, 0)
-_call11.TextStrokeTransparency = 0.6
-_call11.Font = Enum.Font.SourceSansBold
-_call11.TextSize = 24
-_call11.Text = "Dupe working"
-_call11.Parent = _call4
-task.delay(1, function(...)
-end)
+local gui = Instance.new("ScreenGui")
+gui.Name = "DupeGUI"
+gui.ResetOnSpawn = false
+gui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
 
-task.delay(1, function()
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(0, 300, 0, 50)
+status.Position = UDim2.new(0.5, -150, 0.8, 0)
+status.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+status.BackgroundTransparency = 0.3
+status.TextColor3 = Color3.fromRGB(0, 255, 0)
+status.Font = Enum.Font.SourceSansBold
+status.TextSize = 24
+status.Text = "Listo para duplicar"
+status.Parent = gui
+
+local boton = Instance.new("TextButton")
+boton.Size = UDim2.new(0, 150, 0, 40)
+boton.Position = UDim2.new(0.5, -75, 0.9, 0)
+boton.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+boton.TextColor3 = Color3.fromRGB(255, 255, 255)
+boton.Font = Enum.Font.SourceSansBold
+boton.TextSize = 22
+boton.Text = "Activar Dupe"
+boton.Parent = gui
+
+boton.MouseButton1Click:Connect(function()
+    status.Text = "Dupe ejecutándose..."
+
     local r = game:GetService("ReplicatedStorage")
     local p = r:WaitForChild("Packages"):WaitForChild("Net")
     local e = p:FindFirstChild("RE/StealService/Grab")
 
-    local g = function(x)
-        e:FireServer("Grab", x)
-    end
-
-    local m = {}
-    m.__index = m
-
-    function m.n(v)
-        local t = setmetatable({}, m)
-        t.x = v
-        print(">> [Server] Grab Queued:", v)
+    local function grab(id)
+        print(">> [Server] Grab Queued:", id)
         task.wait(0.25)
-        return t
-    end
-
-    function m:d()
-        print(">> [Server] Processing:", self.x)
-        g(self.x)
+        print(">> [Server] Processing:", id)
+        e:FireServer("Grab", id)
     end
 
     local id = math.floor(os.clock() * 100000)
-    local h = m.n(id)
-    task.wait(0.5)
-    h:d()
+    grab(id)
 
-    ScreenGui:Destroy()
+    task.delay(0.5, function()
+        status.Text = "Dupe ejecutado con ID: " .. tostring(id)
+        gui:Destroy()
+    end)
 end)
