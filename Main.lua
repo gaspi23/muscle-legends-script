@@ -1,4 +1,4 @@
-print("Dupe GUI cargado correctamente")
+print("Dupe GUI successfully loaded")
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "DupeGUI"
@@ -13,38 +13,41 @@ status.BackgroundTransparency = 0.3
 status.TextColor3 = Color3.fromRGB(0, 255, 0)
 status.Font = Enum.Font.SourceSansBold
 status.TextSize = 24
-status.Text = "Listo para duplicar"
+status.Text = "Ready to duplicate"
 status.Parent = gui
 
-local boton = Instance.new("TextButton")
-boton.Size = UDim2.new(0, 150, 0, 40)
-boton.Position = UDim2.new(0.5, -75, 0.9, 0)
-boton.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
-boton.TextColor3 = Color3.fromRGB(255, 255, 255)
-boton.Font = Enum.Font.SourceSansBold
-boton.TextSize = 22
-boton.Text = "Activar Dupe"
-boton.Parent = gui
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 150, 0, 40)
+button.Position = UDim2.new(0.5, -75, 0.9, 0)
+button.BackgroundColor3 = Color3.fromRGB(0, 120, 255)
+button.TextColor3 = Color3.fromRGB(255, 255, 255)
+button.Font = Enum.Font.SourceSansBold
+button.TextSize = 22
+button.Text = "Activate Dupe"
+button.Parent = gui
 
-boton.MouseButton1Click:Connect(function()
-    status.Text = "Dupe ejecutándose..."
+button.MouseButton1Click:Connect(function()
+    local char = game:GetService("Players").LocalPlayer.Character
+    local tool = char:FindFirstChildOfClass("Tool")
 
-    local r = game:GetService("ReplicatedStorage")
-    local p = r:WaitForChild("Packages"):WaitForChild("Net")
-    local e = p:FindFirstChild("RE/StealService/Grab")
-
-    local function grab(id)
-        print(">> [Server] Grab Queued:", id)
-        task.wait(0.25)
-        print(">> [Server] Processing:", id)
-        e:FireServer("Grab", id)
+    if tool then
+        local r = game:GetService("ReplicatedStorage")
+        local p = r:WaitForChild("Packages"):WaitForChild("Net")
+        local e = p:FindFirstChild("RE/StealService/Grab")
+        if e then
+            e:FireServer("Grab", tool)
+            status.Text = "Duplication sent: " .. tool.Name
+            print(">> Duplication requested for: " .. tool.Name)
+        else
+            status.Text = "Remote not found"
+            print(">> Error: RE/StealService/Grab not found")
+        end
+    else
+        status.Text = "No tool equipped"
+        print(">> Error: No tool in hand")
     end
 
-    local id = math.floor(os.clock() * 100000)
-    grab(id)
-
-    task.delay(0.5, function()
-        status.Text = "Dupe ejecutado con ID: " .. tostring(id)
+    task.delay(2, function()
         gui:Destroy()
     end)
 end)
