@@ -1,4 +1,4 @@
--- SuperPlayer Hub - Noclip + Fly + Sprint (GUI + Keybinds)
+-- SuperPlayer Hub - Noclip + Fly + Sprint + Invis (GUI + Keybinds)
 -- Autor: Luis & Copilot
 
 -- ====== Servicios y utilidades ======
@@ -26,6 +26,7 @@ local State = {
     noclip = false,
     fly = false,
     sprint = false,
+    invis = false,
     speedWalk = 16,
     speedSprint = 80,
     speedFly = 60,
@@ -39,6 +40,149 @@ local Conns = {
 }
 
 local char, hum, hrp = getChar()
+
+-- ====== Invisibilidad ======
+local Appearance = {
+    parts = {},
+    decals = {},
+    accHandles = {},
+    clothing = {},
+    humanoidName = {},
+}
+
+local function hideCharacter(c)
+    local h = c:FindFirstChildOfClass("Humanoid")
+
+    -- Guardar y ocultar partes (R6/R15/MeshPart)
+    for _, d in ipairs(c:GetDescendants()) do
+        if d:IsA("BasePart") then
+            if not Appearance.parts[d] then
+                Appearance.parts[d] = d.Transparency
+            end
+            d.Transparency = 1
+            pcall(function() d.LocalTransparencyModifier = 1 end)
+        elseif d:IsA("Decal") then
+            if not Appearance.decals[d] then
+                Appearance.decals[d] = d.Transparency
+            end
+            d.Transparency = 1
+        elseif d:IsA("Accessory") then
+            local handle = d:FindFirstChild("Handle")
+            if handle then
+                if not Appearance.accHandles[handle] then
+                    Appearance.accHandles[handle] = handle.Transparency
+                end
+                handle.Transparency = 1
+                pcall(function() handle.LocalTransparencyModifier = 1 end)
+                for _, dd in ipairs(handle:GetDescendants()) do
+                    if dd:IsA("Decal") then
+                        if not Appearance.decals[dd] then
+                            Appearance.decals[dd] = dd.Transparency
+                        end
+                        dd.Transparency = 1
+                    end
+                end
+            end
+        elseif d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
+            if not Appearance.clothing[d] then
+                -- Guardar plantillas para restaurar
+                if d:IsA("Shirt") then
+                    Appearance.clothing[d] = d.ShirtTemplate
+                    d.ShirtTemplate = ""
+                elseif d:IsA("Pants") then
+                    Appearance.clothing[d] = d.PantsTemplate
+                    d.PantsTemplate = ""
+                elseif d:IsA("ShirtGraphic") then
+                    Appearance.clothing[d] = d.Graphic
+                    d.Graphic = ""
+                end
+            else
+                -- Ya guardado; forzar oculto
+                if d:IsA("Shirt") then d.ShirtTemplate = "" end
+                if d:IsA("Pants") then d.PantsTemplate = "" end
+                if d:IsA("ShirtGraphic") then d.Graphic = "" end
+            end
+        end
+    end
+
+    -- Ocultar nombre
+    if h then
+        if Appearance.humanoidName.saved == nil then
+            Appearance.humanoidName.saved = {
+                DisplayDistanceType = (h.DisplayDistanceType or nil),
+                NameDisplayDistance = (h.NameDisplayDistance or nil),
+            }
+        end
+        pcall(function() h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+        pcall(function() h.NameDisplayDistance = 0 end)
+    end
+end
+
+local function showCharacter(c)
+    local h = c:FindFirstChildOfClass("Humanoid")
+    for inst, t in pairs(Appearance.parts) do
+        if inst and inst.Parent then
+            pcall(function()
+                inst.Transparency = t
+                inst.LocalTransparencyModifier = 0
+            end)
+        end
+    end
+    for inst, t in pairs(Appearance.decals) do
+        if inst and inst.Parent then
+            pcall(function() inst.Transparency = t end)
+        end
+    end
+    for handle, t in pairs(Appearance.accHandles) do
+        if handle and handle.Parent then
+            pcall(function()
+                handle.Transparency = t
+                handle.LocalTransparencyModifier = 0
+            end)
+        end
+    end
+    for cloth, val in pairs(Appearance.clothing) do
+        if cloth and cloth.Parent then
+            pcall(function()
+                if cloth:IsA("Shirt") then cloth.ShirtTemplate = val end
+                if cloth:IsA("Pants") then cloth.PantsTemplate = val end
+                if cloth:IsA("ShirtGraphic") then cloth.Graphic = val end
+            end)
+        end
+    end
+    if h and Appearance.humanoidName.saved then
+        pcall(function()
+            if Appearance.humanoidName.saved.DisplayDistanceType then
+                h.DisplayDistanceType = Appearance.humanoidName.saved.DisplayDistanceType
+            end
+        end)
+        pcall(function()
+            if Appearance.humanoidName.saved.NameDisplayDistance then
+                h.NameDisplayDistance = Appearance.humanoidName.saved.NameDisplayDistance
+            end
+        end)
+    end
+end
+
+local function invisOn()
+    if State.invis then return end
+    State.invis = true
+    hideCharacter(char)
+    -- Reaplicar periódicamente por si el juego re-veste o añade accesorios
+    safeConnect(Conns.char, RunService.Heartbeat, function()
+        if State.invis and char and char.Parent then
+            hideCharacter(char)
+        end
+    end)
+end
+
+local function invisOff()
+    if not State.invis then return end
+    State.invis = false
+    for _, c in ipairs(Conns.char) do c:Disconnect() end
+    Conns.char = {}
+    showCharacter(char)
+end
 
 -- ====== Noclip ======
 local function setCharNoCollide(on)
@@ -70,26 +214,19 @@ end
 
 -- ====== Fly ======
 local flyBV, flyBG
-
-local moveKeys = {
-    W=false, A=false, S=false, D=false, Up=false, Down=false
-}
+local moveKeys = {W=false, A=false, S=false, D=false, Up=false, Down=false}
 
 local function computeFlyVelocity()
     local cam = workspace.CurrentCamera
     local dir = Vector3.new()
-    -- Usa MoveDirection para móvil/joystick; teclado con WASD
     local moveDir = hum and hum.MoveDirection or Vector3.new()
     if moveDir.Magnitude > 0 then
-        -- Proyecta a la orientación de la cámara
         local cf = cam.CFrame
         local forward = cf.LookVector
         local right = cf.RightVector
-        -- Descompone moveDir en plano XZ de la cámara
         local planar = (forward * moveDir.Z + right * moveDir.X)
         dir = dir + Vector3.new(planar.X, 0, planar.Z)
     else
-        -- Teclado puro
         local cf = cam.CFrame
         if moveKeys.W then dir = dir + cf.LookVector end
         if moveKeys.S then dir = dir - cf.LookVector end
@@ -169,6 +306,8 @@ local function bindInputs()
             if State.noclip then noclipOff() else noclipOn() end
         elseif input.KeyCode == Enum.KeyCode.F then
             if State.fly then flyOff() else flyOn() end
+        elseif input.KeyCode == Enum.KeyCode.G then
+            if State.invis then invisOff() else invisOn() end
         elseif input.KeyCode == Enum.KeyCode.LeftShift then
             shiftHeld = true
             applyWalkSpeed()
@@ -208,8 +347,8 @@ local function buildGUI()
     gui.Parent = player:WaitForChild("PlayerGui")
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 220, 0, 180)
-    frame.Position = UDim2.new(0.5, -110, 0.5, -90)
+    frame.Size = UDim2.new(0, 240, 0, 210)
+    frame.Position = UDim2.new(0.5, -120, 0.5, -105)
     frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
     frame.BorderSizePixel = 0
     frame.Parent = gui
@@ -249,48 +388,115 @@ local function buildGUI()
         return b
     end
 
-    local function updateBtn(btn, on)
-        btn.Text = (on and "ON  - " or "OFF - ") .. btn.Name
-        btn.BackgroundColor3 = on and Color3.fromRGB(30, 120, 60) or Color3.fromRGB(60, 30, 30)
-    end
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1, -20, 0, 22)
+    status.BackgroundTransparency = 1
+    status.Text = "T/F: Fly | T: Noclip | G: Invis | Shift: Sprint"
+    status.TextColor3 = Color3.fromRGB(180, 180, 180)
+    status.Font = Enum.Font.Gotham
+    status.TextSize = 12
+    status.Parent = frame
 
-    local btnNoclip = makeButton("OFF - Noclip (T)", function(btn)
-        if State.noclip then noclipOff() else noclipOn() end
-        updateBtn(btn, State.noclip)
+    local btnNoclip = makeButton("Noclip: OFF", function(btn)
+        if State.noclip then noclipOff() btn.Text = "Noclip: OFF"
+        else noclipOn() btn.Text = "Noclip: ON" end
     end)
-    btnNoclip.Name = "Noclip (T)"
-    updateBtn(btnNoclip, State.noclip)
 
-    local btnFly = makeButton("OFF - Fly (F)", function(btn)
-        if State.fly then flyOff() else flyOn() end
-        updateBtn(btn, State.fly)
+    local btnFly = makeButton("Fly: OFF", function(btn)
+        if State.fly then flyOff() btn.Text = "Fly: OFF"
+        else flyOn() btn.Text = "Fly: ON" end
     end)
-    btnFly.Name = "Fly (F)"
-    updateBtn(btnFly, State.fly)
 
-    local btnSprint = makeButton("OFF - Sprint (Shift)", function(btn)
+    local btnSprint = makeButton("Sprint: OFF", function(btn)
         sprintToggle()
-        updateBtn(btn, State.sprint)
+        btn.Text = State.sprint and "Sprint: ON" or "Sprint: OFF"
     end)
-    btnSprint.Name = "Sprint (Shift)"
-    updateBtn(btnSprint, State.sprint)
 
-    -- Simple drag
-    local dragging = false
-    local dragStart, startPos
+    local btnInvis = makeButton("Invisibilidad: OFF", function(btn)
+        if State.invis then
+            invisOff()
+            btn.Text = "Invisibilidad: OFF"
+        else
+            invisOn()
+            btn.Text = "Invisibilidad: ON"
+        end
+    end)
+
+    local sliders = Instance.new("Frame")
+    sliders.Size = UDim2.new(1, -20, 0, 70)
+    sliders.BackgroundTransparency = 1
+    sliders.Parent = frame
+
+    local speedWalkLbl = Instance.new("TextLabel")
+    speedWalkLbl.Size = UDim2.new(1, 0, 0, 18)
+    speedWalkLbl.BackgroundTransparency = 1
+    speedWalkLbl.Text = "WalkSpeed: "..State.speedWalk
+    speedWalkLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    speedWalkLbl.Font = Enum.Font.Gotham
+    speedWalkLbl.TextSize = 12
+    speedWalkLbl.Parent = sliders
+
+    local plusW = Instance.new("TextButton")
+    plusW.Size = UDim2.new(0, 32, 0, 24)
+    plusW.Position = UDim2.new(0, 0, 0, 20)
+    plusW.Text = "+WS"
+    plusW.BackgroundColor3 = Color3.fromRGB(45,45,45)
+    plusW.TextColor3 = Color3.fromRGB(255,255,255)
+    plusW.Parent = sliders
+    plusW.MouseButton1Click:Connect(function()
+        State.speedWalk = math.clamp(State.speedWalk + 2, 8, 200)
+        speedWalkLbl.Text = "WalkSpeed: "..State.speedWalk
+        applyWalkSpeed()
+    end)
+
+    local minusW = plusW:Clone()
+    minusW.Text = "-WS"
+    minusW.Position = UDim2.new(0, 36, 0, 20)
+    minusW.Parent = sliders
+    minusW.MouseButton1Click:Connect(function()
+        State.speedWalk = math.clamp(State.speedWalk - 2, 8, 200)
+        speedWalkLbl.Text = "WalkSpeed: "..State.speedWalk
+        applyWalkSpeed()
+    end)
+
+    local speedSprintLbl = speedWalkLbl:Clone()
+    speedSprintLbl.Position = UDim2.new(0, 0, 0, 48)
+    speedSprintLbl.Text = "SprintSpeed: "..State.speedSprint
+    speedSprintLbl.Parent = sliders
+
+    local plusS = plusW:Clone()
+    plusS.Text = "+SP"
+    plusS.Position = UDim2.new(0, 80, 0, 20)
+    plusS.Parent = sliders
+    plusS.MouseButton1Click:Connect(function()
+        State.speedSprint = math.clamp(State.speedSprint + 5, 16, 400)
+        speedSprintLbl.Text = "SprintSpeed: "..State.speedSprint
+        applyWalkSpeed()
+    end)
+
+    local minusS = minusW:Clone()
+    minusS.Text = "-SP"
+    minusS.Position = UDim2.new(0, 116, 0, 20)
+    minusS.Parent = sliders
+    minusS.MouseButton1Click:Connect(function()
+        State.speedSprint = math.clamp(State.speedSprint - 5, 16, 400)
+        speedSprintLbl.Text = "SprintSpeed: "..State.speedSprint
+        applyWalkSpeed()
+    end)
+
+    -- Drag simple
+    local dragging, dragStart, startPos = false, nil, nil
     frame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = frame.Position
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-    UIS.InputChanged:Connect(function(input)
+    frame.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
             frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
@@ -298,41 +504,30 @@ local function buildGUI()
     end)
 end
 
--- ====== Respawn handling ======
-local function bindCharacter()
+-- ====== Ciclo de vida del personaje ======
+local function onCharacter(charNew)
     for _, c in ipairs(Conns.char) do c:Disconnect() end
     Conns.char = {}
 
-    safeConnect(Conns.char, player.CharacterAdded, function(newChar)
-        char = newChar
-        hum = newChar:WaitForChild("Humanoid")
-        hrp = newChar:WaitForChild("HumanoidRootPart")
-        -- Reaplica estados
-        if State.noclip then
-            noclipOff(); noclipOn()
-        end
-        if State.fly then
-            flyOff(); flyOn()
-        end
-        applyWalkSpeed()
-    end)
-end
+    char, hum, hrp = getChar()
+    applyWalkSpeed()
 
--- ====== Init ======
-bindInputs()
-buildGUI()
-bindCharacter()
-applyWalkSpeed()
-
--- Opcional: activar por defecto (false = desactivado al iniciar)
--- noclipOn()
--- flyOn()
--- sprintToggle()
-for _, part in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
-    if part:IsA("BasePart") then
-        part.Transparency = 1
-        if part:FindFirstChildOfClass("Decal") then
-            part:FindFirstChildOfClass("Decal"):Destroy()
-        end
+    -- Reaplicar estados al respawn
+    if State.noclip then noclipOn() end
+    if State.fly then flyOn() end
+    if State.invis then
+        -- Pequeño delay para que carguen todas las piezas/accesorios
+        task.delay(0.25, function()
+            if State.invis then invisOn() end
+        end)
     end
 end
+
+-- Hooks de respawn
+table.insert(Conns.char, player.CharacterAdded:Connect(onCharacter))
+
+-- Init
+bindInputs()
+buildGUI()
+applyWalkSpeed()
+
