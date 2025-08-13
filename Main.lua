@@ -1,6 +1,6 @@
--- Ultra Touch GUI (Tablet) + Fallbacks + Hit Aura + Aura Circular
--- Luis x Copilot — GUI táctil visible siempre, Noclip real, velocidades persistentes,
--- Hit Aura (Handle scaling), y escaneo Aura Circular ajustable (diámetro 4..1000).
+-- Ultra Touch GUI (Tablet) + Fallbacks + Hit Aura + Aura Circular + Scroll fijo
+-- Luis x Copilot — GUI táctil visible, Noclip real, velocidades persistentes,
+-- Hit Aura (Handle scaling), escaneo Aura Circular (4..1000), y panel con desplazamiento vertical.
 
 -- ========== Servicios ==========
 local Players = game:GetService("Players")
@@ -51,7 +51,7 @@ ENV.USH_CFG = ENV.USH_CFG or {
 ENV.USH_STATE = ENV.USH_STATE or {}
 local S = ENV.USH_STATE
 
--- Fallback base (del documento)
+-- Fallback base
 S.walkSpeed   = S.walkSpeed   or 16
 S.sprintSpeed = S.sprintSpeed or 80
 S.flySpeed    = S.flySpeed    or 60
@@ -59,17 +59,16 @@ S.sprint      = S.sprint      or false
 S.noclip      = S.noclip      or false
 
 -- Aura Hit + Aura Circular
-S.aura        = S.aura        or false        -- Hit Aura (Handle scaling)
-S.auraSize    = clamp(S.auraSize or 8, 4, 1000) -- Diámetro para Hit Aura (usamos lado XZ)
-S.auraScan    = S.auraScan    or false        -- Escaneo circular (highlight/targeting)
-S.auraDia     = clamp(S.auraDia or 100, 4, 1000) -- Diámetro círculo (radio = dia/2)
+S.aura        = S.aura        or false
+S.auraSize    = clamp(S.auraSize or 8, 4, 1000)
+S.auraScan    = S.auraScan    or false
+S.auraDia     = clamp(S.auraDia or 100, 4, 1000)
 
 -- ========== Character refs y conexiones ==========
 local Conns = {char={}, noclip={}, speed={}, aura={}, scan={}}
 local char, hum, hrp
 
 local function disconnectAll(t) for _,c in ipairs(t) do pcall(function() c:Disconnect() end) end table.clear(t) end
-
 local function getChar()
     local c = player.Character or player.CharacterAdded:Wait()
     return c, c:WaitForChild("Humanoid"), c:WaitForChild("HumanoidRootPart")
@@ -78,11 +77,8 @@ end
 local function rebindCharacter()
     disconnectAll(Conns.char)
     char, hum, hrp = getChar()
-    -- Reaplica velocidad
     if S._desiredSpeed then hum.WalkSpeed = S._desiredSpeed end
-    -- Reaplica noclip
     if S.noclip then _G.noclipOn_fallback(true) end
-    -- Reaplica Hit Aura
     if S.aura then Aura.tool, Aura.handle = nil, nil; heartbeatAura() end
 end
 
@@ -161,11 +157,11 @@ _G.noclipOff_fallback = function(silent)
     if not silent then notify("Noclip OFF") end
 end
 
--- ========== Hit Aura (Handle scaling: conserva del documento) ==========
+-- ========== Hit Aura (Handle scaling) ==========
 local Aura = {
     enabled = false,
-    size = S.auraSize,     -- lado XZ (diámetro equivalente para el cuadrado)
-    thickness = 6,         -- grosor Y
+    size = S.auraSize,
+    thickness = 6,
     tool = nil,
     handle = nil,
     saved = nil,
@@ -273,7 +269,6 @@ _G.auraOff_fallback     = auraOff
 _G.setAuraSize_fallback = setAuraSize
 
 -- ========== Aura Circular (escaneo en círculo con highlight) ==========
--- Diámetro 4..1000 (radio = dia/2). Frecuencia moderada para tablet.
 local SCAN_HZ = 10
 local highlighted = {} -- [Model] = Highlight
 
@@ -286,14 +281,11 @@ local function isEnemy(model)
     if not model or not model:IsA("Model") then return false end
     if Players:GetPlayerFromCharacter(model) then return false end
     if model == char then return false end
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if not hum or hum.Health <= 0 then return false end
-    -- Optimiza con tags si las usas: CollectionService:AddTag(model, "Enemy")
+    local humx = model:FindFirstChildOfClass("Humanoid")
+    if not humx or humx.Health <= 0 then return false end
     if CollectionService:HasTag(model, "Enemy") then return true end
-    -- o por carpeta Workspace.Enemies
     local enemiesFolder = Workspace:FindFirstChild("Enemies")
     if enemiesFolder and model:IsDescendantOf(enemiesFolder) then return true end
-    -- Fallback: cualquier NPC con Humanoid (sin jugador)
     return true
 end
 
@@ -339,7 +331,7 @@ local function startCircularScan()
 
         local dia = clamp(S.auraDia, 4, 1000)
         local radius = dia * 0.5
-        -- Incluye todo excepto tu character para el radio
+
         local params = OverlapParams.new()
         params.FilterType = Enum.RaycastFilterType.Exclude
         params.FilterDescendantsInstances = {char}
@@ -358,7 +350,7 @@ local function startCircularScan()
     end))
 end
 
--- ========== API expuesta (si tu hub la usa) ==========
+-- ========== API expuesta ==========
 local EXPOSED = ENV.USH or ENV.USE or ENV.STEALTH or ENV.HUB or ENV
 local API = {
     Noclip = {
@@ -415,7 +407,7 @@ local API = {
         desc="Amplía el rango del Tool al golpear",
     },
     AuraSize = {
-        get = function() return (EXPOSED.State and EXPOSED.State.auraSize) or S.auraSize end,
+        get = function() return (EXPOSED.State and (EXPOSED.State.auraSize)) or S.auraSize end,
         set = function(v) if typeof(EXPOSED.setAuraSize)=="function" then EXPOSED.setAuraSize(v) else _G.setAuraSize_fallback(v) end end,
         min=4,max=1000,step=10, desc="Diámetro Hit Aura (studs)",
     },
@@ -463,7 +455,7 @@ New("UICorner",{CornerRadius=UDim.new(0,10)}).Parent=Reopen
 Reopen.MouseButton1Click:Connect(function() Root.Visible=true; Reopen.Visible=false; Screen.Enabled=true end)
 Close.MouseButton1Click:Connect(function() Root.Visible=false; Reopen.Visible=true end)
 
--- Drag
+-- Drag (mover panel principal, no afecta el scroll interno)
 local dragging, startPos, startInput = false, nil, nil
 Top.InputBegan:Connect(function(i)
     if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then
@@ -483,12 +475,26 @@ UIS.InputChanged:Connect(function(i)
     end
 end)
 
--- Body
+-- Tabs
 local Tabs = New("Frame",{BackgroundColor3=Color3.fromRGB(34,34,42),Size=UDim2.new(1,0,0,40),Position=UDim2.new(0,0,0,50)}); Tabs.Parent=Root
-local Body = New("ScrollingFrame",{BackgroundTransparency=1,Size=UDim2.new(1,0,1,-100),Position=UDim2.new(0,0,0,90),ScrollBarThickness=6}); Body.Parent=Root
+
+-- Body (ScrollingFrame con desplazamiento vertical habilitado)
+local Body = New("ScrollingFrame",{
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1,0,1,-100),
+    Position = UDim2.new(0,0,0,90),
+    ScrollBarThickness = 10,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+    VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar,
+    Active = true,
+    ClipsDescendants = true,
+    AutomaticCanvasSize = Enum.AutomaticSize.None
+}); Body.Parent=Root
+
 local Layout = New("UIListLayout",{Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder}); Layout.Parent=Body
 local Pad = New("UIPadding",{PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,12),PaddingBottom=UDim.new(0,12)}); Pad.Parent=Body
-local function updateCanvas() Body.CanvasSize = UDim2.new(0,0,0,Layout.AbsoluteContentSize.Y+24) end
+
+local function updateCanvas() Body.CanvasSize = UDim2.new(0,0,0, Layout.AbsoluteContentSize.Y + 24) end
 Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
 
 local function pill(h) local f=New("Frame",{BackgroundColor3=Color3.fromRGB(28,28,34),Size=UDim2.new(1,0,0,h or 52)}); f.Parent=Body; New("UICorner",{CornerRadius=UDim.new(0,10)}).Parent=f; New("UIStroke",{Thickness=1,Transparency=0.4,Color=Color3.fromRGB(55,55,65)}).Parent=f; return f end
@@ -521,7 +527,7 @@ local function makeStepper(name, desc, getFn, setFn, min, max, step)
     refresh()
 end
 
--- Tabs
+-- Construcción de tabs
 local function clearBody() for _,g in ipairs(Body:GetChildren()) do if g:IsA("GuiObject") then g:Destroy() end end end
 local function buildMovimiento()
     makeToggle("Noclip", "Atravesar objetos", API.Noclip.get, API.Noclip.on, API.Noclip.off)
@@ -532,11 +538,11 @@ local function buildMovimiento()
     makeStepper("SprintSpeed", "Velocidad en sprint", API.SprintSpeed.get, API.SprintSpeed.set, API.SprintSpeed.min, API.SprintSpeed.max, API.SprintSpeed.step)
     makeStepper("FlySpeed", "Velocidad de vuelo (referencia)", API.FlySpeed.get, API.FlySpeed.set, API.FlySpeed.min, API.FlySpeed.max, API.FlySpeed.step)
 
-    -- Hit Aura (conservado)
+    -- Hit Aura
     makeToggle("AURA HIT", "Amplía el área del golpe (Tool Handle)", API.Aura.get, API.Aura.on, API.Aura.off)
     makeStepper("Aura Size", "Diámetro Hit Aura (4..1000)", API.AuraSize.get, API.AuraSize.set, API.AuraSize.min, API.AuraSize.max, API.AuraSize.step)
 
-    -- Aura Circular (nuevo)
+    -- Aura Circular
     makeToggle("AURA CÍRCULAR", "Escaneo circular con highlight", API.AuraScan.get, API.AuraScan.on, API.AuraScan.off)
     makeStepper("Círculo (diámetro)", "4..1000 studs", API.AuraDia.get, API.AuraDia.set, API.AuraDia.min or 4, API.AuraDia.max or 1000, API.AuraDia.step or 10)
 end
@@ -575,9 +581,9 @@ local function tabBtn(label, x, idx)
     return b
 end
 
-tabBtn("Movimiento", 8, 1)
-tabBtn("Stealth",   156, 2)
-tabBtn("Ajustes",   304, 3)
+tabBtn("Movimiento", 8,   1)
+tabBtn("Stealth",   156,  2)
+tabBtn("Ajustes",   304,  3)
 buildTab(1)
 
 -- ========== Init ==========
