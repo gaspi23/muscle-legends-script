@@ -598,4 +598,345 @@ _G.USH_ShowUI = function(v)
     Screen.Enabled = true
 end
 
-notify("GUI lista. Noclip, velocidad, Hit Aura y Aura Circular activos.", 2)
+notify("GUI lista. Noclip, velocidad, Hit Aura y Aura Circular activos.", 2--[[ 
+Ultra Stealth Hub + Hit Aura Extendido (sin guante gigante)
+- Carga tu script original desde tu URL.
+- Añade Hit Aura con alcance real hacia adelante (cono/cápsula) y modo esfera opcional.
+- Sin escalado del guante. Incluye un "watchdog" opcional para revertir Handle enormes.
+- UI compacta y táctil para activar, ajustar rango/anchura/retardo/FOV/filtros, y hotkey (K).
+]]
+
+--==== Cargar el script original tal como lo pediste ====--
+do
+    local SRC = "https://github.com/gaspi23/muscle-legends-script/raw/refs/heads/main/Main.lua"
+    local ok, err = pcall(function()
+        local src = game:HttpGet(SRC)
+        local f = loadstring(src)
+        if typeof(f) == "function" then f() end
+    end)
+    if not ok then warn("UltraStealth original no se pudo cargar: ", err) end
+end
+
+--==== Servicios ====--
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+
+--==== Config Global Persistente (se guarda junto a tu CFG si existe) ====--
+getgenv().USH_AuraExtCfg = getgenv().USH_AuraExtCfg or {
+    enabled = false,
+    range = 30,         -- distancia máxima hacia adelante (studs)
+    width = 6,          -- radio lateral del "túnel" (studs) para cápsula/cone
+    delay = 0.12,       -- intervalo entre barridos de golpe
+    fovDeg = 90,        -- límite de apertura (0-180) alrededor de la mirada
+    losCheck = true,    -- línea de visión (raycast) para evitar paredes
+    frontOnly = true,   -- true = cono/cápsula al frente; false = esfera alrededor
+    hitThroughFF = false, -- ignorar ForceField si se quisiera
+    revertGiantHandle = true, -- si detecta Handle gigantes, los vuelve a escala normal
+    ignoreSameTeam = true,
+    tabletFriendlyUI = true,
+    hotkey = Enum.KeyCode.K,
+}
+
+local CFG = getgenv().USH_AuraExtCfg
+
+-- Integración opcional con el CFG principal si existe
+local USH = rawget(getgenv(), "UltraStealthCfg")
+if typeof(USH) == "table" then
+    -- Solo espaciado de nombres, sin colisiones
+end
+
+--==== Utils ====--
+local function safe(f, ...)
+    local ok, r = pcall(f, ...)
+    if not ok then warn(r) end
+    return ok, r
+end
+
+local function getCharHumHrp(plr)
+    local c = plr.Character or plr.CharacterAdded:Wait()
+    return c, c:FindFirstChildOfClass("Humanoid"), c:FindFirstChild("HumanoidRootPart")
+end
+
+local function isAlive(hum)
+    return hum and hum.Health and hum.Health > 0
+end
+
+local function dot(a,b) return a.X*b.X + a.Y*b.Y + a.Z*b.Z end
+
+local function angleBetween(a, b)
+    local m = (a.Magnitude * b.Magnitude)
+    if m == 0 then return 180 end
+    local d = math.clamp(dot(a, b) / m, -1, 1)
+    return math.deg(math.acos(d))
+end
+
+local function teamEqual(p1, p2)
+    local ok1 = p1 and p1.Team
+    local ok2 = p2 and p2.Team
+    return ok1 and ok2 and p1.Team == p2.Team
+end
+
+local function raycastVisible(from, to, blacklist)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+    params.FilterDescendantsInstances = blacklist or {}
+    local result = Workspace:Raycast(from, to - from, params)
+    return result
+end
+
+--==== Watchdog para evitar el guante gigante (no toco nada si no hace falta) ====--
+local function shrinkIfGiant(handle)
+    if not CFG.revertGiantHandle or not handle or not handle:IsA("BasePart") then return end
+    local big = (handle.Size.X > 4) or (handle.Size.Y > 4) or (handle.Size.Z > 4)
+    if big then
+        safe(function()
+            -- Intenta respetar Mesh si existe, para no romper offsets.
+            local mesh = handle:FindFirstChildOfClass("SpecialMesh") or handle:FindFirstChildOfClass("BlockMesh")
+            if mesh then
+                mesh.Scale = Vector3.new(1,1,1)
+            end
+            handle.Size = Vector3.new(1,1,1)
+            handle.Transparency = math.clamp(handle.Transparency, 0, 0.8) -- no invisibilizamos a la fuerza
+        end)
+    end
+end
+
+local function attachHandleWatchdog(char)
+    if not CFG.revertGiantHandle then return end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local h = tool:FindFirstChild("Handle")
+            if h then shrinkIfGiant(h) end
+        end
+    end
+    char.ChildAdded:Connect(function(inst)
+        if inst:IsA("Tool") then
+            local h = inst:WaitForChild("Handle", 2)
+            if h then
+                shrinkIfGiant(h)
+                h:GetPropertyChangedSignal("Size"):Connect(function() shrinkIfGiant(h) end)
+            end
+        end
+    end)
+end
+
+--==== Núcleo: Hit Aura extendido (proyección hacia adelante) ====--
+local State = {
+    lastSweep = 0,
+    lastHit = {}, -- por Player => os.clock()
+}
+
+local function activateAnyTool(char)
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") and tool:FindFirstChild("Handle") then
+            tool:Activate()
+        end
+    end
+end
+
+local function shouldHitTarget(myPlr, myHRP, myLook, myHum, targetPlr, tChar, tHum, tHRP)
+    if not tChar or not tHRP or not isAlive(tHum) then return false end
+    if CFG.ignoreSameTeam and teamEqual(myPlr, targetPlr) then return false end
+    local delta = tHRP.Position - myHRP.Position
+    if CFG.frontOnly then
+        local ang = angleBetween(delta, myLook)
+        if ang > (CFG.fovDeg/2) then return false end
+        local forward = dot(delta, myLook.Unit)
+        if forward <= 0 or forward > CFG.range then return false end
+        local perp = delta - myLook.Unit * forward
+        if perp.Magnitude > CFG.width then return false end
+    else
+        if delta.Magnitude > CFG.range then return false end
+    end
+    if CFG.losCheck then
+        local res = raycastVisible(myHRP.Position, tHRP.Position, {tChar, myHum.Parent})
+        if res and not res.Instance:IsDescendantOf(tChar) then
+            return false
+        end
+    end
+    if not CFG.hitThroughFF and tChar:FindFirstChildOfClass("ForceField") then
+        return false
+    end
+    return true
+end
+
+local function sweepAndHit()
+    if not CFG.enabled then return end
+    local char, hum, hrp = getCharHumHrp(LocalPlayer)
+    if not char or not hum or not hrp or not isAlive(hum) then return end
+
+    local cam = Workspace.CurrentCamera
+    local look = cam and cam.CFrame.LookVector or hrp.CFrame.LookVector
+    local now = os.clock()
+
+    for _, other in ipairs(Players:GetPlayers()) do
+        if other ~= LocalPlayer then
+            local och, ohum, ohrp = other.Character, nil, nil
+            if och then
+                ohum = och:FindFirstChildOfClass("Humanoid")
+                ohrp = och:FindFirstChild("HumanoidRootPart")
+            end
+            if shouldHitTarget(LocalPlayer, hrp, look, hum, other, och, ohum, ohrp) then
+                local last = State.lastHit[other] or 0
+                if now - last >= CFG.delay * 0.6 then
+                    activateAnyTool(char)
+                    State.lastHit[other] = now
+                end
+            end
+        end
+    end
+end
+
+-- Bucle
+task.spawn(function()
+    -- enganchar watchdog de guante
+    local c = (LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait())
+    attachHandleWatchdog(c)
+    LocalPlayer.CharacterAdded:Connect(function(newC)
+        task.wait(0.25)
+        attachHandleWatchdog(newC)
+    end)
+
+    -- latido del aura
+    local acc = 0
+    RunService.Heartbeat:Connect(function(dt)
+        acc += dt
+        if acc >= (CFG.delay) then
+            acc = 0
+            sweepAndHit()
+        end
+    end)
+end)
+
+--==== UI compacta (coexiste con tu hub; táctil y movible) ====--
+local function makeButton(parent, text, size, pos)
+    local b = Instance.new("TextButton")
+    b.Size = size or UDim2.fromOffset(120, 34)
+    b.Position = pos or UDim2.new(0,0,0,0)
+    b.BackgroundColor3 = Color3.fromRGB(36,36,36)
+    b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.GothamSemibold
+    b.TextSize = 14
+    b.TextWrapped = true
+    b.Text = text
+    b.AutoButtonColor = true
+    b.Parent = parent
+    return b
+end
+
+local function makeLabel(parent, text, size, pos, alignRight)
+    local l = Instance.new("TextLabel")
+    l.Size = size or UDim2.fromOffset(120, 26)
+    l.Position = pos or UDim2.new(0,0,0,0)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.TextColor3 = Color3.fromRGB(230,230,230)
+    l.Font = Enum.Font.Gotham
+    l.TextSize = 13
+    l.TextXAlignment = alignRight and Enum.TextXAlignment.Right or Enum.TextXAlignment.Left
+    l.Parent = parent
+    return l
+end
+
+local function makeMiniUI()
+    local pg = LocalPlayer:WaitForChild("PlayerGui")
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "USH_AuraExtUI"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Parent = pg
+
+    local frame = Instance.new("Frame")
+    frame.Name = "Panel"
+    frame.Size = UDim2.fromOffset(270, CFG.tabletFriendlyUI and 220 or 200)
+    frame.Position = UDim2.new(1, -290, 1, -(CFG.tabletFriendlyUI and 240 or 220))
+    frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
+    frame.BorderSizePixel = 0
+    frame.Active = true
+    frame.Draggable = true
+    frame.Parent = gui
+
+    local title = makeLabel(frame, "Hit Aura (K)", UDim2.new(1, -12, 0, 26), UDim2.new(0, 6, 0, 6))
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 16
+
+    local toggle = makeButton(frame, CFG.enabled and "ON" or "OFF", UDim2.fromOffset(70, 30), UDim2.new(0, 6, 0, 40))
+    local rangeL = makeLabel(frame, "Range", UDim2.fromOffset(120, 20), UDim2.new(0, 86, 0, 42))
+    local rangeVal = makeLabel(frame, tostring(CFG.range), UDim2.fromOffset(50, 20), UDim2.new(1, -56, 0, 42), true)
+    local rMinus = makeButton(frame, "-", UDim2.fromOffset(30, 28), UDim2.new(0, 86, 0, 64))
+    local rPlus  = makeButton(frame, "+", UDim2.fromOffset(30, 28), UDim2.new(0, 120, 0, 64))
+
+    local widthL = makeLabel(frame, "Width", UDim2.fromOffset(120, 20), UDim2.new(0, 86, 0, 98))
+    local widthVal = makeLabel(frame, tostring(CFG.width), UDim2.fromOffset(50, 20), UDim2.new(1, -56, 0, 98), true)
+    local wMinus = makeButton(frame, "-", UDim2.fromOffset(30, 28), UDim2.new(0, 86, 0, 120))
+    local wPlus  = makeButton(frame, "+", UDim2.fromOffset(30, 28), UDim2.new(0, 120, 0, 120))
+
+    local delayL = makeLabel(frame, "Delay", UDim2.fromOffset(120, 20), UDim2.new(0, 86, 0, 154))
+    local delayVal = makeLabel(frame, tostring(CFG.delay), UDim2.fromOffset(50, 20), UDim2.new(1, -56, 0, 154), true)
+    local dMinus = makeButton(frame, "-", UDim2.fromOffset(30, 28), UDim2.new(0, 86, 0, 176))
+    local dPlus  = makeButton(frame, "+", UDim2.fromOffset(30, 28), UDim2.new(0, 120, 0, 176))
+
+    local modeBtn = makeButton(frame, CFG.frontOnly and "Mode: Cono" : "Mode: Esfera", UDim2.fromOffset(110, 28), UDim2.new(1, -120, 0, 64))
+    local fovBtn  = makeButton(frame, "FOV: " .. tostring(CFG.fovDeg), UDim2.fromOffset(110, 28), UDim2.new(1, -120, 0, 120))
+    local losBtn  = makeButton(frame, CFG.losCheck and "LOS: ON" or "LOS: OFF", UDim2.fromOffset(110, 28), UDim2.new(1, -120, 0, 176))
+
+    local function refresh()
+        toggle.Text = CFG.enabled and "ON" or "OFF"
+        rangeVal.Text = tostring(math.floor(CFG.range + 0.5))
+        widthVal.Text = tostring(math.floor(CFG.width + 0.5))
+        delayVal.Text = string.format("%.2f", CFG.delay)
+        modeBtn.Text = CFG.frontOnly and "Mode: Cono" or "Mode: Esfera"
+        fovBtn.Text  = "FOV: " .. tostring(CFG.fovDeg)
+        losBtn.Text  = CFG.losCheck and "LOS: ON" or "LOS: OFF"
+    end
+
+    toggle.MouseButton1Click:Connect(function()
+        CFG.enabled = not CFG.enabled
+        refresh()
+    end)
+    rMinus.MouseButton1Click:Connect(function() CFG.range = math.max(4, CFG.range - 2); refresh() end)
+    rPlus.MouseButton1Click:Connect(function() CFG.range = math.min(1000, CFG.range + 2); refresh() end)
+
+    wMinus.MouseButton1Click:Connect(function() CFG.width = math.max(1, CFG.width - 1); refresh() end)
+    wPlus.MouseButton1Click:Connect(function() CFG.width = math.min(50, CFG.width + 1); refresh() end)
+
+    dMinus.MouseButton1Click:Connect(function() CFG.delay = math.max(0.02, CFG.delay - 0.01); refresh() end)
+    dPlus.MouseButton1Click:Connect(function() CFG.delay = math.min(0.5,  CFG.delay + 0.01); refresh() end)
+
+    modeBtn.MouseButton1Click:Connect(function() CFG.frontOnly = not CFG.frontOnly; refresh() end)
+    fovBtn.MouseButton1Click:Connect(function()
+        -- ciclo 60, 90, 120, 180
+        local seq = {60, 90, 120, 180}
+        local idx = 1
+        for i,v in ipairs(seq) do if v == CFG.fovDeg then idx = i break end end
+        CFG.fovDeg = seq[(idx % #seq) + 1]
+        refresh()
+    end)
+    losBtn.MouseButton1Click:Connect(function() CFG.losCheck = not CFG.losCheck; refresh() end)
+
+    -- gesto táctil: arrastre ya habilitado (Draggable)
+    refresh()
+end
+
+task.defer(makeMiniUI)
+
+--==== Hotkey ====--
+UIS.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.KeyCode == CFG.hotkey then
+        CFG.enabled = not CFG.enabled
+    end
+end)
+
+--==== Nota: 
+-- - No se escala el Handle en ningún momento.
+-- - El "watchdog" solo corrige Handles gigantes si aparece alguno (opcional por CFG).
+-- - El barrido golpea a distancia real usando proyección al frente (cono/cápsula).
+-- - Coexiste con tu hub actual y su GUI. Este panel es independiente y movible.
+-- - Ajusta el hotkey en CFG.hotkey si lo prefieres.
+
+
