@@ -1,619 +1,372 @@
--- Ultra Touch GUI - Wrapper visual para tu Hub (tablet-first)
--- No modifica tu lógica interna. Enlaza a tus funciones si existen.
--- Autor: Copilot x Luis - 2025-08
+-- Ultra Touch GUI (Tablet) + Fallback funcional para Noclip y Velocidades
+-- Luis x Copilot — Garantiza que los toggles hagan efecto aunque tu hub no exponga API.
+-- - Noclip real (Stepped loop)
+-- - Velocidad Walk/Sprint/Fly con aplicación directa al Humanoid
+-- - Reaplica tras respawn
+-- - GUI táctil grande con tabs
 
--- ============ Guardas / entorno ============
-local function safeGetEnv()
-    local ok, env = pcall(function()
-        return (getgenv and getgenv()) or _G
-    end)
-    return ok and env or _G
-end
+-- ===== Servicios =====
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local StarterGui = game:GetService("StarterGui")
 
-local ENV = safeGetEnv()
+local player = Players.LocalPlayer
+local function notify(t,d) pcall(function() StarterGui:SetCore("SendNotification",{Title="Ultra Touch",Text=t,Duration=d or 1.8}) end) end
+
+-- ===== Entorno compartido =====
+local ENV = (getgenv and getgenv()) or _G
 if ENV.USH_GUI_LOADED then return end
 ENV.USH_GUI_LOADED = true
 
 ENV.USH_CFG = ENV.USH_CFG or {
-    guiPos = {0.05, 0.15},
-    uiScale = 1.0,
-    opacity = 0.9,
+  guiPos = {0.06, 0.16},
+  uiScale = 1.0,
+  opacity = 0.92,
 }
-ENV.USH_STATE = ENV.USH_STATE or {} -- fallback de estado si tu hub no lo expone
+ENV.USH_STATE = ENV.USH_STATE or {}
 
--- ============ Detección de API de tu hub ============
--- Intenta detectar tu API expuesta en alguno de estos objetos:
-local EXPOSED = ENV.USH or ENV.USE or ENV.STEALTH or ENV.HUB or ENV -- ajustable
+-- ===== Referencias de character con auto-rebind =====
+local Conns = { char={}, noclip={}, speed={}, ui={} }
+local char, hum, hrp
 
--- Mapea aquí los nombres de funciones y lectura de estado de tu hub.
--- Ajusta si tus nombres difieren.
+local function getChar()
+  local c = player.Character or player.CharacterAdded:Wait()
+  return c, c:WaitForChild("Humanoid"), c:WaitForChild("HumanoidRootPart")
+end
+
+local function disconnectAll(t) for _,c in ipairs(t) do pcall(function() c:Disconnect() end) end; table.clear(t) end
+
+local function rebindCharacter()
+  disconnectAll(Conns.char)
+  char, hum, hrp = getChar()
+  -- Restablece watchers
+  if ENV.USH_STATE._desiredSpeed then hum.WalkSpeed = ENV.USH_STATE._desiredSpeed end
+  if ENV.USH_STATE.noclip then
+    -- Reinicia noclip sobre el nuevo character
+    local function setNoCollide(model,on)
+      for _,v in ipairs(model:GetDescendants()) do
+        if v:IsA("BasePart") then v.CanCollide = not on end
+      end
+    end
+    setNoCollide(char,true)
+  end
+end
+
+table.insert(Conns.char, player.CharacterAdded:Connect(function()
+  task.wait(0.15)
+  rebindCharacter()
+  -- Reaplica estado
+  if ENV.USH_STATE.noclip then _G.noclipOn_fallback(true) end
+  if ENV.USH_STATE._desiredSpeed then hum.WalkSpeed = ENV.USH_STATE._desiredSpeed end
+end))
+
+-- ===== Fallback funcional (se usa si tu hub no expone API) =====
+local function clamp(v, lo, hi) if v<lo then return lo elseif v>hi then return hi else return v end end
+
+-- Estado local de fallback
+ENV.USH_STATE.walkSpeed  = ENV.USH_STATE.walkSpeed  or 16
+ENV.USH_STATE.sprintSpeed= ENV.USH_STATE.sprintSpeed or 80
+ENV.USH_STATE.flySpeed   = ENV.USH_STATE.flySpeed   or 60
+ENV.USH_STATE.sprint     = ENV.USH_STATE.sprint     or false
+ENV.USH_STATE.noclip     = ENV.USH_STATE.noclip     or false
+
+-- Mantener velocidad contra overrides
+local function applyWalkSpeed()
+  if not hum then return end
+  local target = ENV.USH_STATE.sprint and ENV.USH_STATE.sprintSpeed or ENV.USH_STATE.walkSpeed
+  ENV.USH_STATE._desiredSpeed = target
+  hum.WalkSpeed = target
+end
+
+local function startSpeedGuard()
+  disconnectAll(Conns.speed)
+  -- Corrige si un script externo cambia WalkSpeed
+  if hum then
+    table.insert(Conns.speed, hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+      local target = ENV.USH_STATE._desiredSpeed
+      if target and math.abs((hum.WalkSpeed or 0) - target) > 0.5 then
+        hum.WalkSpeed = target
+      end
+    end))
+  end
+  -- Pulso de seguridad (latido suave)
+  table.insert(Conns.speed, RunService.Heartbeat:Connect(function()
+    if hum and ENV.USH_STATE._desiredSpeed and math.abs(hum.WalkSpeed - ENV.USH_STATE._desiredSpeed) > 0.5 then
+      hum.WalkSpeed = ENV.USH_STATE._desiredSpeed
+    end
+  end))
+end
+
+-- Noclip real (Stepped)
+local function setNoCollide(model,on)
+  for _,v in ipairs(model:GetDescendants()) do
+    if v:IsA("BasePart") then v.CanCollide = not on end
+  end
+end
+
+_G.noclipOn_fallback = function(silent)
+  if ENV.USH_STATE.noclip then return end
+  ENV.USH_STATE.noclip = true
+  if not char or not char.Parent then rebindCharacter() end
+  setNoCollide(char, true)
+  disconnectAll(Conns.noclip)
+  table.insert(Conns.noclip, RunService.Stepped:Connect(function()
+    if ENV.USH_STATE.noclip and char and char.Parent then
+      setNoCollide(char, true)
+    end
+  end))
+  if not silent then notify("Noclip ON") end
+end
+
+_G.noclipOff_fallback = function(silent)
+  if not ENV.USH_STATE.noclip then return end
+  ENV.USH_STATE.noclip = false
+  disconnectAll(Conns.noclip)
+  if char and char.Parent then setNoCollide(char, false) end
+  if not silent then notify("Noclip OFF") end
+end
+
+-- Exponer setters de velocidad (también como API global para la GUI)
+_G.setWalkSpeed_fallback = function(v)
+  v = clamp(v, 8, 300)
+  ENV.USH_STATE.walkSpeed = v
+  applyWalkSpeed()
+end
+_G.setSprintSpeed_fallback = function(v)
+  v = clamp(v, 16, 800)
+  ENV.USH_STATE.sprintSpeed = v
+  applyWalkSpeed()
+end
+_G.setFlySpeed_fallback = function(v)
+  v = clamp(v, 10, 1200)
+  ENV.USH_STATE.flySpeed = v
+  -- Si tu motor de fly usa ENV.USH_STATE.flySpeed, tomará este valor
+end
+
+_G.sprintOn_fallback = function()
+  ENV.USH_STATE.sprint = true
+  applyWalkSpeed()
+  notify("Sprint ON", 1.2)
+end
+_G.sprintOff_fallback = function()
+  ENV.USH_STATE.sprint = false
+  applyWalkSpeed()
+  notify("Sprint OFF", 1.2)
+end
+
+-- Inicializa referencias y watchers
+rebindCharacter()
+applyWalkSpeed()
+startSpeedGuard()
+
+-- ===== Detección de API de tu hub (si existe) =====
+-- Intentamos usar tu hub primero; si no, usamos estos fallback.
+local EXPOSED = ENV.USH or ENV.USE or ENV.STEALTH or ENV.HUB or ENV
+
 local API = {
-    -- TOGGLES
-    Noclip = {
-        get = function()
-            return (EXPOSED.State and EXPOSED.State.noclip)
-                or ENV.USH_STATE.noclip or false
-        end,
-        on = function() if typeof(EXPOSED.noclipOn)=="function" then EXPOSED.noclipOn() end ENV.USH_STATE.noclip=true end,
-        off= function() if typeof(EXPOSED.noclipOff)=="function" then EXPOSED.noclipOff() end ENV.USH_STATE.noclip=false end,
-        desc="Atravesar objetos",
-    },
-    Fly = {
-        get = function() return (EXPOSED.State and EXPOSED.State.fly) or ENV.USH_STATE.fly or false end,
-        on  = function() if typeof(EXPOSED.flyOn)=="function" then EXPOSED.flyOn() end ENV.USH_STATE.fly=true end,
-        off = function() if typeof(EXPOSED.flyOff)=="function" then EXPOSED.flyOff() end ENV.USH_STATE.fly=false end,
-        desc="Vuelo libre",
-    },
-    Sprint = {
-        get = function() return (EXPOSED.State and EXPOSED.State.sprint) or ENV.USH_STATE.sprint or false end,
-        on  = function() if typeof(EXPOSED.sprintOn)=="function" then EXPOSED.sprintOn() end ENV.USH_STATE.sprint=true end,
-        off = function() if typeof(EXPOSED.sprintOff)=="function" then EXPOSED.sprintOff() end ENV.USH_STATE.sprint=false end,
-        desc="Carrera",
-    },
-    Invis = {
-        get = function() return (EXPOSED.State and EXPOSED.State.invisRep) or ENV.USH_STATE.invisRep or false end,
-        on  = function() if typeof(EXPOSED.invisRepOn)=="function" then EXPOSED.invisRepOn() end ENV.USH_STATE.invisRep=true end,
-        off = function() if typeof(EXPOSED.invisRepOff)=="function" then EXPOSED.invisRepOff() end ENV.USH_STATE.invisRep=false end,
-        desc="Invisibilidad/replicación",
-    },
-    Ghost = {
-        get = function() return (EXPOSED.State and EXPOSED.State.ghost) or ENV.USH_STATE.ghost or false end,
-        on  = function() if typeof(EXPOSED.ghostOn)=="function" then EXPOSED.ghostOn() end ENV.USH_STATE.ghost=true end,
-        off = function() if typeof(EXPOSED.ghostOff)=="function" then EXPOSED.ghostOff() end ENV.USH_STATE.ghost=false end,
-        desc="Colisiones fantasma",
-    },
-    NoHit = {
-        get = function() return (EXPOSED.State and EXPOSED.State.noHitBubble) or ENV.USH_STATE.noHitBubble or false end,
-        on  = function() if typeof(EXPOSED.noHitOn)=="function" then EXPOSED.noHitOn() end ENV.USH_STATE.noHitBubble=true end,
-        off = function() if typeof(EXPOSED.noHitOff)=="function" then EXPOSED.noHitOff() end ENV.USH_STATE.noHitBubble=false end,
-        desc="Evitar hitbox/bubble",
-    },
-    AntiRestore = {
-        get = function() return (EXPOSED.State and EXPOSED.State.antiRestore) or ENV.USH_STATE.antiRestore or false end,
-        on  = function() if typeof(EXPOSED.antiRestoreOn)=="function" then EXPOSED.antiRestoreOn() end ENV.USH_STATE.antiRestore=true end,
-        off = function() if typeof(EXPOSED.antiRestoreOff)=="function" then EXPOSED.antiRestoreOff() end ENV.USH_STATE.antiRestore=false end,
-        desc="Anti-TPBack/restore",
-    },
-    -- SPEEDS
-    WalkSpeed = {
-        get = function()
-            return (EXPOSED.State and EXPOSED.State.walkSpeed) or ENV.USH_STATE.walkSpeed or 16
-        end,
-        set = function(v)
-            if typeof(EXPOSED.setWalkSpeed)=="function" then EXPOSED.setWalkSpeed(v) end
-            ENV.USH_STATE.walkSpeed = v
-        end,
-        min=8, max=120, step=2,
-        desc="Velocidad caminar",
-    },
-    SprintSpeed = {
-        get = function() return (EXPOSED.State and EXPOSED.State.sprintSpeed) or ENV.USH_STATE.sprintSpeed or 24 end,
-        set = function(v) if typeof(EXPOSED.setSprintSpeed)=="function" then EXPOSED.setSprintSpeed(v) end ENV.USH_STATE.sprintSpeed=v end,
-        min=12, max=160, step=2,
-        desc="Velocidad sprint",
-    },
-    FlySpeed = {
-        get = function() return (EXPOSED.State and EXPOSED.State.flySpeed) or ENV.USH_STATE.flySpeed or 2 end,
-        set = function(v) if typeof(EXPOSED.setFlySpeed)=="function" then EXPOSED.setFlySpeed(v) end ENV.USH_STATE.flySpeed=v end,
-        min=1, max=50, step=1,
-        desc="Velocidad vuelo",
-    },
-    -- TELEPORT
-    TP_ModeNext = { call = function() if typeof(EXPOSED.tpModeNext)=="function" then EXPOSED.tpModeNext() end end, desc="Cambiar modo TP" },
-    TP_Mouse    = { call = function() if typeof(EXPOSED.tpToMouse)=="function" then EXPOSED.tpToMouse() end end, desc="TP al cursor" },
-    TP_Player   = { call = function(name) if typeof(EXPOSED.tpToPlayer)=="function" then EXPOSED.tpToPlayer(name) end end, desc="TP a jugador" },
-    WP_Add      = { call = function() if typeof(EXPOSED.addWaypoint)=="function" then EXPOSED.addWaypoint() end end, desc="Guardar waypoint" },
-    WP_Goto     = { call = function(idx) if typeof(EXPOSED.gotoWaypoint)=="function" then EXPOSED.gotoWaypoint(idx) end end, desc="Ir a waypoint" },
-    WP_Remove   = { call = function(idx) if typeof(EXPOSED.removeWaypoint)=="function" then EXPOSED.removeWaypoint(idx) end end, desc="Borrar waypoint" },
+  Noclip = {
+    get = function()
+      return (EXPOSED.State and EXPOSED.State.noclip) or ENV.USH_STATE.noclip
+    end,
+    on  = function()
+      if typeof(EXPOSED.noclipOn)=="function" then EXPOSED.noclipOn() else _G.noclipOn_fallback() end
+    end,
+    off = function()
+      if typeof(EXPOSED.noclipOff)=="function" then EXPOSED.noclipOff() else _G.noclipOff_fallback() end
+    end,
+    desc = "Atravesar objetos",
+  },
+  Sprint = {
+    get = function()
+      return (EXPOSED.State and EXPOSED.State.sprint) or ENV.USH_STATE.sprint
+    end,
+    on  = function()
+      if typeof(EXPOSED.sprintOn)=="function" then EXPOSED.sprintOn() else _G.sprintOn_fallback() end
+    end,
+    off = function()
+      if typeof(EXPOSED.sprintOff)=="function" then EXPOSED.sprintOff() else _G.sprintOff_fallback() end
+    end,
+    desc = "Correr más rápido",
+  },
+  Fly = {
+    get = function() return (EXPOSED.State and EXPOSED.State.fly) or (ENV.USH_STATE.fly or false) end,
+    on  = function() if typeof(EXPOSED.flyOn)=="function" then EXPOSED.flyOn() else notify("Conecta tu Fly del hub") end end,
+    off = function() if typeof(EXPOSED.flyOff)=="function" then EXPOSED.flyOff() else notify("Conecta tu Fly del hub") end end,
+    desc = "Vuelo libre",
+  },
+  Invis = {
+    get = function() return (EXPOSED.State and EXPOSED.State.invisRep) or (ENV.USH_STATE.invisRep or false) end,
+    on  = function() if typeof(EXPOSED.invisRepOn)=="function" then EXPOSED.invisRepOn() else notify("Conecta InvisRep del hub") end end,
+    off = function() if typeof(EXPOSED.invisRepOff)=="function" then EXPOSED.invisRepOff() else notify("Conecta InvisRep del hub") end end,
+    desc = "Invisibilidad replicada",
+  },
+  Ghost = {
+    get = function() return (EXPOSED.State and EXPOSED.State.ghost) or (ENV.USH_STATE.ghost or false) end,
+    on  = function() if typeof(EXPOSED.ghostOn)=="function" then EXPOSED.ghostOn() else notify("Conecta Ghost del hub") end end,
+    off = function() if typeof(EXPOSED.ghostOff)=="function" then EXPOSED.ghostOff() else notify("Conecta Ghost del hub") end end,
+    desc = "Colisión fantasma",
+  },
+  -- Speeds
+  WalkSpeed = {
+    get = function() return (EXPOSED.State and EXPOSED.State.walkSpeed) or ENV.USH_STATE.walkSpeed end,
+    set = function(v) if typeof(EXPOSED.setWalkSpeed)=="function" then EXPOSED.setWalkSpeed(v) else _G.setWalkSpeed_fallback(v) end end,
+    min=8,max=300,step=2, desc="Velocidad caminar",
+  },
+  SprintSpeed = {
+    get = function() return (EXPOSED.State and EXPOSED.State.sprintSpeed) or ENV.USH_STATE.sprintSpeed end,
+    set = function(v) if typeof(EXPOSED.setSprintSpeed)=="function" then EXPOSED.setSprintSpeed(v) else _G.setSprintSpeed_fallback(v) end end,
+    min=16,max=800,step=5, desc="Velocidad sprint",
+  },
+  FlySpeed = {
+    get = function() return (EXPOSED.State and EXPOSED.State.flySpeed) or ENV.USH_STATE.flySpeed end,
+    set = function(v) if typeof(EXPOSED.setFlySpeed)=="function" then EXPOSED.setFlySpeed(v) else _G.setFlySpeed_fallback(v) end end,
+    min=10,max=1200,step=10, desc="Velocidad vuelo",
+  },
 }
 
-local function hasToggle(name)
-    local t = API[name]
-    if not t then return false end
-    return typeof(t.get)=="function" and typeof(t.on)=="function" and typeof(t.off)=="function"
-end
-local function hasCall(name) return API[name] and typeof(API[name].call)=="function" end
-local function hasSet(name)  return API[name] and typeof(API[name].set)=="function" and typeof(API[name].get)=="function" end
+-- ===== UI Builder (tablet-first) =====
+local function New(c,p,children) local o=Instance.new(c) for k,v in pairs(p or {}) do o[k]=v end if children then for _,ch in ipairs(children) do ch.Parent=o end end return o end
 
--- ============ Servicios Roblox ============
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local Screen = New("ScreenGui",{Name="UltraTouchGUI",ResetOnSpawn=false,IgnoreGuiInset=true, ZIndexBehavior=Enum.ZIndexBehavior.Global})
+Screen.Parent = player:WaitForChild("PlayerGui")
+local UIScale = New("UIScale",{Scale=ENV.USH_CFG.uiScale or 1.0}); UIScale.Parent=Screen
 
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
--- ============ UI Builder ============
-local function new(inst, props, children)
-    local o = Instance.new(inst)
-    if props then
-        for k,v in pairs(props) do o[k]=v end
-    end
-    if children then
-        for _,c in ipairs(children) do c.Parent = o end
-    end
-    return o
-end
-
-local colors = {
-    bg = Color3.fromRGB(18,18,22),
-    panel = Color3.fromRGB(26,26,32),
-    accent = Color3.fromRGB(0,170,120),
-    accentOff = Color3.fromRGB(140,50,60),
-    accentIdle = Color3.fromRGB(60,60,70),
-    text = Color3.fromRGB(235,235,240),
-    sub = Color3.fromRGB(180,180,190),
-    line = Color3.fromRGB(50,50,60),
-    tab = Color3.fromRGB(35,35,42),
-}
-
-local function makeDraggable(frame, dragArea)
-    dragArea = dragArea or frame
-    local dragging=false
-    local startPos, startInput
-    dragArea.InputBegan:Connect(function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-            dragging=true
-            startPos = input.Position
-            startInput = input
-        end
-    end)
-    dragArea.InputEnded:Connect(function(input)
-        if input==startInput then dragging=false end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input==startInput or input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-            local delta = input.Position - startPos
-            frame.Position = UDim2.fromScale(math.clamp(frame.Position.X.Scale + delta.X / workspace.CurrentCamera.ViewportSize.X,0,1),
-                                             math.clamp(frame.Position.Y.Scale + delta.Y / workspace.CurrentCamera.ViewportSize.Y,0,1))
-            startPos = input.Position
-            ENV.USH_CFG.guiPos = {frame.Position.X.Scale, frame.Position.Y.Scale}
-        end
-    end)
-end
-
--- ============ Root GUI ============
-local Screen = new("ScreenGui", {
-    Name="UltraTouchGUI",
-    ResetOnSpawn=false,
-    IgnoreGuiInset=true,
-    ZIndexBehavior=Enum.ZIndexBehavior.Global,
+local Root = New("Frame",{
+  BackgroundColor3=Color3.fromRGB(20,20,24),
+  BackgroundTransparency = 1 - (ENV.USH_CFG.opacity or 0.92),
+  Size=UDim2.new(0,460,0,520),
+  Position=UDim2.fromScale(ENV.USH_CFG.guiPos[1] or 0.06, ENV.USH_CFG.guiPos[2] or 0.16)
 })
-Screen.Parent = PlayerGui
+Root.Parent=Screen
+New("UICorner",{CornerRadius=UDim.new(0,12)}).Parent=Root
+New("UIStroke",{Thickness=1,Transparency=0.5,Color=Color3.fromRGB(60,60,70)}).Parent=Root
 
-local UIScale = new("UIScale", { Scale = ENV.USH_CFG.uiScale or 1.0 })
-UIScale.Parent = Screen
+local Top = New("Frame",{BackgroundColor3=Color3.fromRGB(34,34,42),Size=UDim2.new(1,0,0,50)}); Top.Parent=Root
+local Title = New("TextLabel",{BackgroundTransparency=1,Text="Ultra Stealth • Touch",Font=Enum.Font.GothamSemibold,TextSize=18,TextColor3=Color3.fromRGB(240,240,245),TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,14,0,0),Size=UDim2.new(0.7,0,1,0)}); Title.Parent=Top
+local Close = New("TextButton",{Text="✕",Font=Enum.Font.GothamBold,TextSize=18,BackgroundTransparency=1,TextColor3=Color3.fromRGB(240,240,245),Size=UDim2.new(0,48,1,0),Position=UDim2.new(1,-48,0,0)}); Close.Parent=Top
+Close.MouseButton1Click:Connect(function() Screen.Enabled=false end)
 
-local Root = new("Frame", {
-    Name="Root",
-    BackgroundColor3 = colors.bg,
-    BackgroundTransparency = 1 - (ENV.USH_CFG.opacity or 0.9),
-    Position = UDim2.fromScale(ENV.USH_CFG.guiPos[1] or 0.05, ENV.USH_CFG.guiPos[2] or 0.15),
-    Size = UDim2.new(0, 420, 0, 480),
-})
-Root.Parent = Screen
-
-local Corner = new("UICorner", { CornerRadius = UDim.new(0,12) }); Corner.Parent = Root
-new("UIStroke", {Thickness=1, Color=colors.line, Transparency=0.4}).Parent = Root
-
-local TopBar = new("Frame", {
-    BackgroundColor3 = colors.tab,
-    Size = UDim2.new(1,0,0,48),
-    BorderSizePixel=0,
-})
-TopBar.Parent = Root
-new("UICorner", {CornerRadius=UDim.new(0,12)}).Parent = TopBar
-
-local Title = new("TextLabel", {
-    Text = "Ultra Stealth • Touch",
-    Font = Enum.Font.GothamSemibold,
-    TextSize = 18,
-    TextColor3 = colors.text,
-    BackgroundTransparency=1,
-    Position = UDim2.new(0,16,0,0),
-    Size = UDim2.new(0.6,0,1,0),
-    TextXAlignment=Enum.TextXAlignment.Left,
-})
-Title.Parent = TopBar
-
-local CloseBtn = new("TextButton", {
-    Text="✕",
-    Font=Enum.Font.GothamBold, TextSize=18,
-    TextColor3=colors.text,
-    BackgroundTransparency=1,
-    Size=UDim2.new(0,48,1,0),
-    Position=UDim2.new(1,-48,0,0),
-})
-CloseBtn.Parent = TopBar
-
-local TabBar = new("Frame", {
-    BackgroundColor3 = colors.tab,
-    Size = UDim2.new(1,0,0,40),
-    Position = UDim2.new(0,0,0,48),
-    BorderSizePixel=0,
-})
-TabBar.Parent = Root
-
-local Content = new("Frame", {
-    BackgroundColor3 = colors.panel,
-    Position = UDim2.new(0,0,0,88),
-    Size = UDim2.new(1,0,1,-88),
-    BorderSizePixel=0,
-})
-Content.Parent = Root
-new("UIStroke",{Thickness=1,Color=colors.line,Transparency=0.25}).Parent = Content
-
-local Scroll = new("ScrollingFrame", {
-    BackgroundTransparency=1,
-    Size = UDim2.new(1,0,1,0),
-    CanvasSize = UDim2.new(0,0,0,0),
-    ScrollBarThickness = 6,
-    BorderSizePixel=0,
-})
-Scroll.Parent = Content
-
-local Layout = new("UIListLayout", {
-    Padding = UDim.new(0,10),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-})
-Layout.Parent = Scroll
-
-local Padding = new("UIPadding", {
-    PaddingLeft = UDim.new(0,12),
-    PaddingRight = UDim.new(0,12),
-    PaddingTop = UDim.new(0,12),
-    PaddingBottom = UDim.new(0,12),
-})
-Padding.Parent = Scroll
-
-local function updateCanvas()
-    Scroll.CanvasSize = UDim2.new(0,0,0, Layout.AbsoluteContentSize.Y + 24)
-end
-Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
-
-makeDraggable(Root, TopBar)
-
-CloseBtn.MouseButton1Click:Connect(function()
-    Screen.Enabled = false
+-- Drag
+local dragging=false; local startPos; local startInput
+Top.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true; startPos=i.Position; startInput=i end end)
+Top.InputEnded:Connect(function(i) if i==startInput then dragging=false end end)
+UIS.InputChanged:Connect(function(i)
+  if dragging and (i==startInput or i.UserInputType==Enum.UserInputType.Touch or i.UserInputType==Enum.UserInputType.MouseMovement) then
+    local delta = i.Position - startPos
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920,1080)
+    local nx = math.clamp(Root.Position.X.Scale + delta.X/vp.X, 0, 1)
+    local ny = math.clamp(Root.Position.Y.Scale + delta.Y/vp.Y, 0, 1)
+    Root.Position = UDim2.fromScale(nx, ny)
+    ENV.USH_CFG.guiPos = {nx, ny}
+    startPos = i.Position
+  end
 end)
 
--- ============ Componentes ============
-local function pill(color)
-    local p = new("Frame", {BackgroundColor3=color, Size=UDim2.new(1,0,0,46), BorderSizePixel=0})
-    new("UICorner",{CornerRadius=UDim.new(0,10)}).Parent = p
-    new("UIStroke",{Thickness=1,Color=colors.line,Transparency=0.3}).Parent = p
-    return p
-end
+-- Contenido con tabs simples
+local Tabs = New("Frame",{BackgroundColor3=Color3.fromRGB(34,34,42),Size=UDim2.new(1,0,0,40),Position=UDim2.new(0,0,0,50)}); Tabs.Parent=Root
+local Body = New("ScrollingFrame",{BackgroundTransparency=1,Size=UDim2.new(1,0,1,-90),Position=UDim2.new(0,0,0,90),ScrollBarThickness=6}); Body.Parent=Root
+local Layout = New("UIListLayout",{Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder}); Layout.Parent=Body
+local Pad = New("UIPadding",{PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,12),PaddingBottom=UDim.new(0,12)}); Pad.Parent=Body
+local function updateCanvas() Body.CanvasSize = UDim2.new(0,0,0,Layout.AbsoluteContentSize.Y+24) end
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
 
-local function label(parent, text, sub)
-    local l = new("TextLabel", {
-        BackgroundTransparency=1,
-        Text=text,
-        Font=Enum.Font.GothamSemibold,
-        TextSize=16,
-        TextXAlignment=Enum.TextXAlignment.Left,
-        TextColor3=colors.text,
-        Position=UDim2.new(0,14,0,6),
-        Size=UDim2.new(1,-160,0,20),
-    })
-    l.Parent = parent
-    if sub then
-        local s = new("TextLabel", {
-            BackgroundTransparency=1,
-            Text=sub,
-            Font=Enum.Font.Gotham,
-            TextSize=12,
-            TextXAlignment=Enum.TextXAlignment.Left,
-            TextColor3=colors.sub,
-            Position=UDim2.new(0,14,0,24),
-            Size=UDim2.new(1,-160,0,18),
-        })
-        s.Parent = parent
-    end
-    return l
+local function pill(h) local f=New("Frame",{BackgroundColor3=Color3.fromRGB(28,28,34),Size=UDim2.new(1,0,0,h or 52)}); f.Parent=Body; New("UICorner",{CornerRadius=UDim.new(0,10)}).Parent=f; New("UIStroke",{Thickness=1,Transparency=0.4,Color=Color3.fromRGB(55,55,65)}).Parent=f; return f end
+local function text(parent, t, sub)
+  local l=New("TextLabel",{BackgroundTransparency=1,Text=t,Font=Enum.Font.GothamSemibold,TextSize=16,TextColor3=Color3.fromRGB(235,235,240),TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,12,0,6),Size=UDim2.new(1,-140,0,20)}); l.Parent=parent
+  if sub then local s=New("TextLabel",{BackgroundTransparency=1,Text=sub,Font=Enum.Font.Gotham,TextSize=12,TextColor3=Color3.fromRGB(170,170,180),TextXAlignment=Enum.TextXAlignment.Left,Position=UDim2.new(0,12,0,26),Size=UDim2.new(1,-140,0,18)}); s.Parent=parent end
 end
 
 local function makeToggle(name, desc, getFn, onFn, offFn)
-    local enabled = typeof(getFn)=="function" and (getFn() and true or false) or false
-    local available = typeof(getFn)=="function" and typeof(onFn)=="function" and typeof(offFn)=="function"
-    local p = pill(colors.panel)
-    p.Parent = Scroll
-
-    label(p, name, desc .. (available and "" or " (API no encontrada)"))
-
-    local btn = new("TextButton", {
-        Text = enabled and "ON" or "OFF",
-        Font = Enum.Font.GothamBold,
-        TextSize=16,
-        TextColor3=Color3.fromRGB(255,255,255),
-        BackgroundColor3 = available and (enabled and colors.accent or colors.accentOff) or colors.accentIdle,
-        Size=UDim2.new(0,100,0,34),
-        Position=UDim2.new(1,-114,0,6),
-    })
-    btn.Parent = p
-    new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent = btn
-
-    if not available then
-        btn.AutoButtonColor=false
-        btn.Text="N/A"
-        btn.TextColor3=Color3.fromRGB(220,220,220)
-    else
-        btn.MouseButton1Click:Connect(function()
-            local now = getFn()
-            if now then offFn() else onFn() end
-            local st = getFn()
-            btn.Text = st and "ON" or "OFF"
-            btn.BackgroundColor3 = st and colors.accent or colors.accentOff
-        end)
-    end
-
-    return p
+  local fr = pill(52); text(fr, name, desc)
+  local btn = New("TextButton",{Text="",Font=Enum.Font.GothamBold,TextSize=14,TextColor3=Color3.new(1,1,1),Size=UDim2.new(0,108,0,34),Position=UDim2.new(1,-120,0,9)})
+  btn.Parent=fr; New("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=btn
+  local function refresh()
+    local v = false; pcall(function() v=getFn() end)
+    btn.Text = v and "ON" or "OFF"
+    btn.BackgroundColor3 = v and Color3.fromRGB(30,140,90) or Color3.fromRGB(140,40,50)
+  end
+  btn.MouseButton1Click:Connect(function()
+    local v=false; pcall(function() v=getFn() end)
+    if v then offFn() else onFn() end
+    refresh()
+  end)
+  refresh()
 end
 
 local function makeStepper(name, desc, getFn, setFn, min, max, step)
-    local available = typeof(getFn)=="function" and typeof(setFn)=="function"
-    local p = pill(colors.panel); p.Size = UDim2.new(1,0,0,56); p.Parent = Scroll
-    label(p, name, desc .. (available and "" or " (API no encontrada)"))
+  local fr = pill(64); text(fr, name, desc)
+  local minus = New("TextButton",{Text="−",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(40,40,48),Size=UDim2.new(0,44,0,34),Position=UDim2.new(1,-210,0,22)}); minus.Parent=fr; New("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=minus
+  local box = New("TextBox",{Text="",PlaceholderText="--",Font=Enum.Font.GothamSemibold,TextSize=16,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(40,40,48),ClearTextOnFocus=false,Size=UDim2.new(0,110,0,34),Position=UDim2.new(1,-160,0,22)}); box.Parent=fr; New("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=box
+  local plus = New("TextButton",{Text="+",Font=Enum.Font.GothamBold,TextSize=20,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(40,40,48),Size=UDim2.new(0,44,0,34),Position=UDim2.new(1,-44,0,22)}); plus.Parent=fr; New("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=plus
 
-    local minus = new("TextButton", {
-        Text = "−", Font=Enum.Font.GothamBold, TextSize=20,
-        TextColor3=colors.text,
-        BackgroundColor3 = available and colors.tab or colors.accentIdle,
-        Size=UDim2.new(0,40,0,34), Position=UDim2.new(1,-220,0,10),
-    })
-    local valBox = new("TextBox", {
-        Text = available and tostring(getFn()) or "--",
-        PlaceholderText = "--",
-        Font=Enum.Font.GothamSemibold, TextSize=16,
-        TextColor3=colors.text,
-        BackgroundColor3 = colors.tab,
-        Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-170,0,10),
-        ClearTextOnFocus=false,
-    })
-    local plus = new("TextButton", {
-        Text = "+", Font=Enum.Font.GothamBold, TextSize=20,
-        TextColor3=colors.text,
-        BackgroundColor3 = available and colors.tab or colors.accentIdle,
-        Size=UDim2.new(0,40,0,34), Position=UDim2.new(1,-60,0,10),
-    })
-    minus.Parent=p; valBox.Parent=p; plus.Parent=p
-    for _,b in ipairs({minus,plus,valBox}) do new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=b end
-
-    local function clamp(v)
-        v = math.clamp(v, min, max)
-        local s = step or 1
-        v = math.floor((v + (s/2)) / s) * s
-        return v
-    end
-
-    if available then
-        local function setFrom(delta)
-            local cur = tonumber(getFn()) or min
-            local nv = clamp(cur + delta)
-            setFn(nv)
-            valBox.Text = tostring(nv)
-        end
-        minus.MouseButton1Click:Connect(function() setFrom(-(step or 1)) end)
-        plus.MouseButton1Click:Connect(function() setFrom( (step or 1)) end)
-        valBox.FocusLost:Connect(function(enter)
-            local v = tonumber(valBox.Text)
-            if v then
-                v = clamp(v)
-                setFn(v)
-                valBox.Text = tostring(v)
-            else
-                valBox.Text = tostring(getFn())
-            end
-        end)
-    else
-        minus.AutoButtonColor=false
-        plus.AutoButtonColor=false
-        valBox.TextEditable=false
-    end
-
-    return p
+  local function current() local v=0 pcall(function() v=getFn() end); return v end
+  local function set(v) pcall(function() setFn(v) end) end
+  local function clampStep(v)
+    v = math.clamp(v, min, max); local s=step or 1
+    v = math.floor((v + s/2)/s)*s; return v
+  end
+  local function refresh() box.Text = tostring(current()) end
+  minus.MouseButton1Click:Connect(function() set(clampStep(current() - (step or 1))); refresh() end)
+  plus.MouseButton1Click:Connect(function() set(clampStep(current() + (step or 1))); refresh() end)
+  box.FocusLost:Connect(function(enter)
+    local n = tonumber(box.Text)
+    if n then set(clampStep(n)) else box.Text = tostring(current()) end
+  end)
+  refresh()
 end
 
-local function makeTabButton(text, order)
-    local b = new("TextButton", {
-        Text=text, Font=Enum.Font.GothamSemibold, TextSize=14,
-        TextColor3=colors.text,
-        BackgroundColor3=colors.tab,
-        Size=UDim2.new(0,100,1,0),
-        Position=UDim2.new(0,(order-1)*104,0,0),
-        AutoButtonColor=true,
-    })
-    b.Parent = TabBar
-    new("UIStroke",{Color=colors.line,Transparency=0.6,Thickness=1}).Parent = b
-    return b
+-- Tabs (Movimiento / Stealth / Ajustes)
+local tabIndex = 1
+local function clearBody() for _,g in ipairs(Body:GetChildren()) do if g:IsA("GuiObject") then g:Destroy() end end end
+local function buildMovimiento()
+  makeToggle("Noclip", "Atravesar objetos", API.Noclip.get, API.Noclip.on, API.Noclip.off)
+  makeToggle("Sprint", "Correr más rápido", API.Sprint.get, API.Sprint.on, API.Sprint.off)
+  makeToggle("Fly", "Vuelo (si tu hub lo expone)", API.Fly.get, API.Fly.on, API.Fly.off)
+
+  makeStepper("WalkSpeed", "Velocidad al caminar", API.WalkSpeed.get, API.WalkSpeed.set, API.WalkSpeed.min, API.WalkSpeed.max, API.WalkSpeed.step)
+  makeStepper("SprintSpeed", "Velocidad en sprint", API.SprintSpeed.get, API.SprintSpeed.set, API.SprintSpeed.min, API.SprintSpeed.max, API.SprintSpeed.step)
+  makeStepper("FlySpeed", "Velocidad de vuelo (referencia)", API.FlySpeed.get, API.FlySpeed.set, API.FlySpeed.min, API.FlySpeed.max, API.FlySpeed.step)
+end
+local function buildStealth()
+  makeToggle("Invis", "Invisibilidad replicada (si tu hub la tiene)", API.Invis.get, API.Invis.on, API.Invis.off)
+  makeToggle("Ghost", "Colisión fantasma (si tu hub la tiene)", API.Ghost.get, API.Ghost.on, API.Ghost.off)
+end
+local function buildAjustes()
+  makeStepper("Opacidad UI", "Transparencia (40-100%)",
+    function() return math.floor((ENV.USH_CFG.opacity or 0.92)*100+0.5) end,
+    function(v) ENV.USH_CFG.opacity = math.clamp(v/100, 0.4, 1.0); Root.BackgroundTransparency = 1 - ENV.USH_CFG.opacity end,
+    40,100,5
+  )
+  makeStepper("Escala UI", "Tamaño (50-150%)",
+    function() return math.floor((ENV.USH_CFG.uiScale or 1.0)*100+0.5) end,
+    function(v) ENV.USH_CFG.uiScale = math.clamp(v/100, 0.5, 1.5); UIScale.Scale = ENV.USH_CFG.uiScale end,
+    50,150,5
+  )
+  local fr = pill(52); text(fr, "Posición", "Recentrar GUI")
+  local rec = New("TextButton",{Text="Recentrar",Font=Enum.Font.GothamBold,TextSize=16,TextColor3=Color3.new(1,1,1),BackgroundColor3=Color3.fromRGB(40,40,48),Size=UDim2.new(0,120,0,34),Position=UDim2.new(1,-130,0,9)}); rec.Parent=fr; New("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=rec
+  rec.MouseButton1Click:Connect(function() Root.Position=UDim2.fromScale(0.06,0.16); ENV.USH_CFG.guiPos={0.06,0.16}; Screen.Enabled=true end)
 end
 
--- ============ Tabs ============
-local tabs = {
-    {name="Movimiento", build=function()
-        makeToggle("Noclip", API.Noclip.desc, API.Noclip.get, API.Noclip.on, API.Noclip.off)
-        makeToggle("Fly", API.Fly.desc, API.Fly.get, API.Fly.on, API.Fly.off)
-        makeToggle("Sprint", API.Sprint.desc, API.Sprint.get, API.Sprint.on, API.Sprint.off)
-
-        makeStepper("WalkSpeed", API.WalkSpeed.desc, API.WalkSpeed.get, API.WalkSpeed.set, API.WalkSpeed.min, API.WalkSpeed.max, API.WalkSpeed.step)
-        makeStepper("SprintSpeed", API.SprintSpeed.desc, API.SprintSpeed.get, API.SprintSpeed.set, API.SprintSpeed.min, API.SprintSpeed.max, API.SprintSpeed.step)
-        makeStepper("FlySpeed", API.FlySpeed.desc, API.FlySpeed.get, API.FlySpeed.set, API.FlySpeed.min, API.FlySpeed.max, API.FlySpeed.step)
-    end},
-    {name="Stealth", build=function()
-        makeToggle("Invis", API.Invis.desc, API.Invis.get, API.Invis.on, API.Invis.off)
-        makeToggle("Ghost", API.Ghost.desc, API.Ghost.get, API.Ghost.on, API.Ghost.off)
-    end},
-    {name="Defensa", build=function()
-        makeToggle("NoHit", API.NoHit.desc, API.NoHit.get, API.NoHit.on, API.NoHit.off)
-        makeToggle("AntiRestore", API.AntiRestore.desc, API.AntiRestore.get, API.AntiRestore.on, API.AntiRestore.off)
-    end},
-    {name="Teleport", build=function()
-        -- Modo TP
-        local p1 = pill(colors.panel); p1.Parent = Scroll
-        label(p1, "Modo TP", "Cambia entre modos configurados")
-        local bMode = new("TextButton", {
-            Text = "Cambiar",
-            Font = Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("TP_ModeNext") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-114,0,6),
-        })
-        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bMode; bMode.Parent=p1
-        if hasCall("TP_ModeNext") then
-            bMode.MouseButton1Click:Connect(function() API.TP_ModeNext.call() end)
-        else bMode.AutoButtonColor=false; bMode.Text="N/A" end
-
-        -- TP al cursor
-        local p2 = pill(colors.panel); p2.Parent = Scroll
-        label(p2, "TP al cursor", "Teleporta hacia la posición del cursor")
-        local bMouse = new("TextButton", {
-            Text = "TP",
-            Font = Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("TP_Mouse") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-114,0,6),
-        })
-        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bMouse; bMouse.Parent=p2
-        if hasCall("TP_Mouse") then
-            bMouse.MouseButton1Click:Connect(function() API.TP_Mouse.call() end)
-        else bMouse.AutoButtonColor=false; bMouse.Text="N/A" end
-
-        -- TP a jugador
-        local p3 = pill(colors.panel); p3.Size=UDim2.new(1,0,0,70); p3.Parent = Scroll
-        label(p3, "TP a jugador", "Escribe el nombre exacto o parcial")
-        local nameBox = new("TextBox", {
-            PlaceholderText="Nombre del jugador",
-            Font=Enum.Font.Gotham, TextSize=14, TextColor3=colors.text,
-            BackgroundColor3=colors.tab, ClearTextOnFocus=false,
-            Size=UDim2.new(1,-130,0,34), Position=UDim2.new(0,14,0,28),
-        })
-        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=nameBox; nameBox.Parent=p3
-        local bTP = new("TextButton", {
-            Text="TP", Font=Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("TP_Player") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,80,0,34), Position=UDim2.new(1,-94,0,28),
-        })
-        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bTP; bTP.Parent=p3
-        if hasCall("TP_Player") then
-            bTP.MouseButton1Click:Connect(function()
-                local q = nameBox.Text
-                if q and #q>0 then API.TP_Player.call(q) end
-            end)
-        else bTP.AutoButtonColor=false; bTP.Text="N/A" end
-
-        -- Waypoints
-        local p4 = pill(colors.panel); p4.Parent = Scroll
-        label(p4, "Waypoints", "Guardar / ir / borrar (usa índice)")
-        local idxBox = new("TextBox", {
-            PlaceholderText="Índice",
-            Font=Enum.Font.Gotham, TextSize=14, TextColor3=colors.text,
-            BackgroundColor3=colors.tab, ClearTextOnFocus=false,
-            Size=UDim2.new(0,70,0,34), Position=UDim2.new(0,14,0,6),
-        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=idxBox; idxBox.Parent=p4
-
-        local bAdd = new("TextButton", {Text="Guardar", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("WP_Add") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,90,0,34), Position=UDim2.new(0,94,0,6),
-        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bAdd; bAdd.Parent=p4
-        local bGo = new("TextButton", {Text="Ir", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("WP_Goto") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,60,0,34), Position=UDim2.new(0,194,0,6),
-        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bGo; bGo.Parent=p4
-        local bDel = new("TextButton", {Text="Borrar", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
-            BackgroundColor3 = hasCall("WP_Remove") and colors.tab or colors.accentIdle,
-            Size=UDim2.new(0,90,0,34), Position=UDim2.new(0,264,0,6),
-        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bDel; bDel.Parent=p4
-
-        if hasCall("WP_Add") then
-            bAdd.MouseButton1Click:Connect(function() API.WP_Add.call() end)
-        else bAdd.AutoButtonColor=false; bAdd.Text="N/A" end
-
-        if hasCall("WP_Goto") then
-            bGo.MouseButton1Click:Connect(function()
-                local idx = tonumber(idxBox.Text)
-                if idx then API.WP_Goto.call(idx) end
-            end)
-        else bGo.AutoButtonColor=false; bGo.Text="N/A" end
-
-        if hasCall("WP_Remove") then
-            bDel.MouseButton1Click:Connect(function()
-                local idx = tonumber(idxBox.Text)
-                if idx then API.WP_Remove.call(idx) end
-            end)
-        else bDel.AutoButtonColor=false; bDel.Text="N/A" end
-    end},
-    {name="Ajustes", build=function()
-        -- Opacidad
-        makeStepper("Opacidad UI", "Transparencia del panel (0.4 - 1.0)", function()
-            return math.floor((ENV.USH_CFG.opacity or 0.9)*100+0.5)
-        end, function(v)
-            ENV.USH_CFG.opacity = math.clamp(v/100, 0.4, 1.0)
-            Root.BackgroundTransparency = 1 - ENV.USH_CFG.opacity
-        end, 40, 100, 5)
-
-        -- Escala
-        makeStepper("Escala UI", "Tamaño global de la interfaz (50 - 150%)", function()
-            return math.floor((ENV.USH_CFG.uiScale or 1.0)*100 + 0.5)
-        end, function(v)
-            ENV.USH_CFG.uiScale = math.clamp(v/100, 0.5, 1.5)
-            UIScale.Scale = ENV.USH_CFG.uiScale
-        end, 50, 150, 5)
-
-        -- Recentrar UI
-        local p = pill(colors.panel); p.Parent=Scroll
-        label(p, "Posición", "Recentrar/mostrar GUI")
-        local b = new("TextButton",{
-            Text="Recentrar",
-            Font=Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
-            BackgroundColor3=colors.tab, Size=UDim2.new(0,110,0,34), Position=UDim2.new(1,-124,0,6),
-        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=b; b.Parent=p
-        b.MouseButton1Click:Connect(function()
-            Root.Position = UDim2.fromScale(0.05, 0.15)
-            ENV.USH_CFG.guiPos = {0.05, 0.15}
-            Screen.Enabled = true
-        end)
-    end},
-}
-
--- Tab buttons
-local tabButtons = {}
-local currentTab = 1
-
-local function clearContent()
-    for _,c in ipairs(Scroll:GetChildren()) do
-        if c:IsA("GuiObject") then c:Destroy() end
-    end
-end
-local function buildTab(index)
-    currentTab = index
-    clearContent()
-    tabs[index].build()
-    updateCanvas()
+local function buildTab(i)
+  clearBody()
+  if i==1 then buildMovimiento()
+  elseif i==2 then buildStealth()
+  else buildAjustes() end
+  updateCanvas()
 end
 
-for i,t in ipairs(tabs) do
-    local b = makeTabButton(t.name, i)
-    tabButtons[i]=b
-    b.MouseButton1Click:Connect(function()
-        buildTab(i)
-        for j,bb in ipairs(tabButtons) do
-            bb.BackgroundColor3 = (j==i) and colors.panel or colors.tab
-        end
-    end)
+local function tabBtn(label, x, idx)
+  local b = New("TextButton",{Text=label,Font=Enum.Font.GothamSemibold,TextSize=14,TextColor3=Color3.fromRGB(235,235,240),BackgroundColor3=Color3.fromRGB(34,34,42),Size=UDim2.new(0,120,1,0),Position=UDim2.new(0,x,0,0)})
+  b.Parent=Tabs
+  b.MouseButton1Click:Connect(function() tabIndex=idx; buildTab(idx) end)
+  return b
 end
 
--- Inicia en Movimiento
+tabBtn("Movimiento", 8, 1)
+tabBtn("Stealth",   136, 2)
+tabBtn("Ajustes",   264, 3)
 buildTab(1)
-for j,bb in ipairs(tabButtons) do
-    bb.BackgroundColor3 = (j==1) and colors.panel or colors.tab
-end
 
--- ============ Mejores interacciones táctiles ============
--- Aumenta el padding si está en touch
-if UserInputService.TouchEnabled then
-    Root.Size = UDim2.new(0, 460, 0, 520)
-end
-
--- ============ Persistencia básica en sesión ============
--- (ENV.USH_CFG ya persistirá mientras el ejecutor mantenga el estado)
-
--- ============ Fin ============
+-- Listo
+notify("GUI táctil lista. Noclip y velocidad funcionando.", 2)
