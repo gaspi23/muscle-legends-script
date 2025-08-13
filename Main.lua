@@ -1,6 +1,96 @@
 -- Ultra Touch GUI (Tablet) + Fallback funcional + Aura Hit
 -- Luis x Copilot — GUI táctil, Noclip real, velocidades persistentes, y AURA HIT ajustable (4..1000)
 -- Mantiene la GUI y funciones previas. Solo se agrega el botón AURA HIT y su control de tamaño.
+-- =========================================
+-- Ultra Stealth Hub – Versión con Autorestore GUI
+-- =========================================
+
+-- ===== Servicios básicos
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- ===== Entorno compartido y guard (arreglo de re-mostrar)
+local ENV = (getgenv and getgenv()) or _G
+do
+    local existing = PlayerGui:FindFirstChild("UltraTouchGUI")
+    if existing then
+        existing.Enabled = true
+        existing.ResetOnSpawn = false
+        _G.USH_ShowUI = function(v) existing.Enabled = (v ~= false) end
+        return -- Salimos, no reconstruimos la GUI
+    end
+end
+ENV.USH_GUI_LOADED = true
+
+-- ===== Variables y funciones de utilidad
+_G.USH_ShowUI = function(v)
+    local g = PlayerGui:FindFirstChild("UltraTouchGUI")
+    if g then g.Enabled = (v ~= false) end
+end
+
+-- Función para crear la GUI principal
+local function CreateMainUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "UltraTouchGUI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.IgnoreGuiInset = false
+    ScreenGui.Parent = PlayerGui
+
+    -- Marco principal
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Size = UDim2.new(0, 250, 0, 300)
+    MainFrame.Position = UDim2.new(0.5, -125, 0.5, -150)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Parent = ScreenGui
+
+    -- Botón de cierre ✕
+    local CloseButton = Instance.new("TextButton")
+    CloseButton.Size = UDim2.new(0, 25, 0, 25)
+    CloseButton.Position = UDim2.new(1, -30, 0, 5)
+    CloseButton.Text = "✕"
+    CloseButton.TextScaled = true
+    CloseButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+    CloseButton.Parent = MainFrame
+    CloseButton.MouseButton1Click:Connect(function()
+        ScreenGui.Enabled = false
+    end)
+
+    -- Ejemplo: botón de invisibilidad
+    local InvisButton = Instance.new("TextButton")
+    InvisButton.Size = UDim2.new(0.8, 0, 0, 40)
+    InvisButton.Position = UDim2.new(0.1, 0, 0.2, 0)
+    InvisButton.Text = "Toggle Invisibility"
+    InvisButton.TextScaled = true
+    InvisButton.BackgroundColor3 = Color3.fromRGB(50, 50, 200)
+    InvisButton.Parent = MainFrame
+    InvisButton.MouseButton1Click:Connect(function()
+        print("Invisibilidad alternada")
+        -- Aquí va tu lógica de invisibilidad
+    end)
+
+    -- Agrega aquí todos los demás botones y elementos de tu hub...
+end
+
+-- ===== Construir la GUI inicial
+CreateMainUI()
+
+-- ===== Aquí empieza el resto de tu código de funciones del Hub =====
+-- Radar, safe routing, auto-prompt, base awareness, etc.
+-- Ejemplo de placeholder:
+local function RadarLoop()
+    RunService.RenderStepped:Connect(function()
+        -- Lógica de radar aquí
+    end)
+end
+RadarLoop()
+
+-- Más funciones de tu hub...
 
 -- ===== Servicios =====
 local Players = game:GetService("Players")
