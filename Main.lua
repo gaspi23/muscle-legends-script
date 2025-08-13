@@ -328,3 +328,11 @@ applyWalkSpeed()
 -- noclipOn()
 -- flyOn()
 -- sprintToggle()
+for _, part in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+    if part:IsA("BasePart") then
+        part.Transparency = 1
+        if part:FindFirstChildOfClass("Decal") then
+            part:FindFirstChildOfClass("Decal"):Destroy()
+        end
+    end
+end
