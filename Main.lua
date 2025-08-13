@@ -1,657 +1,619 @@
--- Ultra Stealth Hub (Vanguard) - by Luis & Copilot
--- Todo lo de Ultimate + CollisionGroup No-Hit, Anti-Teleport-Back, Teleport seguro (Path/Raycast), Perfiles por juego, Command Palette
+-- Ultra Touch GUI - Wrapper visual para tu Hub (tablet-first)
+-- No modifica tu lógica interna. Enlaza a tus funciones si existen.
+-- Autor: Copilot x Luis - 2025-08
 
--- ===== Services =====
+-- ============ Guardas / entorno ============
+local function safeGetEnv()
+    local ok, env = pcall(function()
+        return (getgenv and getgenv()) or _G
+    end)
+    return ok and env or _G
+end
+
+local ENV = safeGetEnv()
+if ENV.USH_GUI_LOADED then return end
+ENV.USH_GUI_LOADED = true
+
+ENV.USH_CFG = ENV.USH_CFG or {
+    guiPos = {0.05, 0.15},
+    uiScale = 1.0,
+    opacity = 0.9,
+}
+ENV.USH_STATE = ENV.USH_STATE or {} -- fallback de estado si tu hub no lo expone
+
+-- ============ Detección de API de tu hub ============
+-- Intenta detectar tu API expuesta en alguno de estos objetos:
+local EXPOSED = ENV.USH or ENV.USE or ENV.STEALTH or ENV.HUB or ENV -- ajustable
+
+-- Mapea aquí los nombres de funciones y lectura de estado de tu hub.
+-- Ajusta si tus nombres difieren.
+local API = {
+    -- TOGGLES
+    Noclip = {
+        get = function()
+            return (EXPOSED.State and EXPOSED.State.noclip)
+                or ENV.USH_STATE.noclip or false
+        end,
+        on = function() if typeof(EXPOSED.noclipOn)=="function" then EXPOSED.noclipOn() end ENV.USH_STATE.noclip=true end,
+        off= function() if typeof(EXPOSED.noclipOff)=="function" then EXPOSED.noclipOff() end ENV.USH_STATE.noclip=false end,
+        desc="Atravesar objetos",
+    },
+    Fly = {
+        get = function() return (EXPOSED.State and EXPOSED.State.fly) or ENV.USH_STATE.fly or false end,
+        on  = function() if typeof(EXPOSED.flyOn)=="function" then EXPOSED.flyOn() end ENV.USH_STATE.fly=true end,
+        off = function() if typeof(EXPOSED.flyOff)=="function" then EXPOSED.flyOff() end ENV.USH_STATE.fly=false end,
+        desc="Vuelo libre",
+    },
+    Sprint = {
+        get = function() return (EXPOSED.State and EXPOSED.State.sprint) or ENV.USH_STATE.sprint or false end,
+        on  = function() if typeof(EXPOSED.sprintOn)=="function" then EXPOSED.sprintOn() end ENV.USH_STATE.sprint=true end,
+        off = function() if typeof(EXPOSED.sprintOff)=="function" then EXPOSED.sprintOff() end ENV.USH_STATE.sprint=false end,
+        desc="Carrera",
+    },
+    Invis = {
+        get = function() return (EXPOSED.State and EXPOSED.State.invisRep) or ENV.USH_STATE.invisRep or false end,
+        on  = function() if typeof(EXPOSED.invisRepOn)=="function" then EXPOSED.invisRepOn() end ENV.USH_STATE.invisRep=true end,
+        off = function() if typeof(EXPOSED.invisRepOff)=="function" then EXPOSED.invisRepOff() end ENV.USH_STATE.invisRep=false end,
+        desc="Invisibilidad/replicación",
+    },
+    Ghost = {
+        get = function() return (EXPOSED.State and EXPOSED.State.ghost) or ENV.USH_STATE.ghost or false end,
+        on  = function() if typeof(EXPOSED.ghostOn)=="function" then EXPOSED.ghostOn() end ENV.USH_STATE.ghost=true end,
+        off = function() if typeof(EXPOSED.ghostOff)=="function" then EXPOSED.ghostOff() end ENV.USH_STATE.ghost=false end,
+        desc="Colisiones fantasma",
+    },
+    NoHit = {
+        get = function() return (EXPOSED.State and EXPOSED.State.noHitBubble) or ENV.USH_STATE.noHitBubble or false end,
+        on  = function() if typeof(EXPOSED.noHitOn)=="function" then EXPOSED.noHitOn() end ENV.USH_STATE.noHitBubble=true end,
+        off = function() if typeof(EXPOSED.noHitOff)=="function" then EXPOSED.noHitOff() end ENV.USH_STATE.noHitBubble=false end,
+        desc="Evitar hitbox/bubble",
+    },
+    AntiRestore = {
+        get = function() return (EXPOSED.State and EXPOSED.State.antiRestore) or ENV.USH_STATE.antiRestore or false end,
+        on  = function() if typeof(EXPOSED.antiRestoreOn)=="function" then EXPOSED.antiRestoreOn() end ENV.USH_STATE.antiRestore=true end,
+        off = function() if typeof(EXPOSED.antiRestoreOff)=="function" then EXPOSED.antiRestoreOff() end ENV.USH_STATE.antiRestore=false end,
+        desc="Anti-TPBack/restore",
+    },
+    -- SPEEDS
+    WalkSpeed = {
+        get = function()
+            return (EXPOSED.State and EXPOSED.State.walkSpeed) or ENV.USH_STATE.walkSpeed or 16
+        end,
+        set = function(v)
+            if typeof(EXPOSED.setWalkSpeed)=="function" then EXPOSED.setWalkSpeed(v) end
+            ENV.USH_STATE.walkSpeed = v
+        end,
+        min=8, max=120, step=2,
+        desc="Velocidad caminar",
+    },
+    SprintSpeed = {
+        get = function() return (EXPOSED.State and EXPOSED.State.sprintSpeed) or ENV.USH_STATE.sprintSpeed or 24 end,
+        set = function(v) if typeof(EXPOSED.setSprintSpeed)=="function" then EXPOSED.setSprintSpeed(v) end ENV.USH_STATE.sprintSpeed=v end,
+        min=12, max=160, step=2,
+        desc="Velocidad sprint",
+    },
+    FlySpeed = {
+        get = function() return (EXPOSED.State and EXPOSED.State.flySpeed) or ENV.USH_STATE.flySpeed or 2 end,
+        set = function(v) if typeof(EXPOSED.setFlySpeed)=="function" then EXPOSED.setFlySpeed(v) end ENV.USH_STATE.flySpeed=v end,
+        min=1, max=50, step=1,
+        desc="Velocidad vuelo",
+    },
+    -- TELEPORT
+    TP_ModeNext = { call = function() if typeof(EXPOSED.tpModeNext)=="function" then EXPOSED.tpModeNext() end end, desc="Cambiar modo TP" },
+    TP_Mouse    = { call = function() if typeof(EXPOSED.tpToMouse)=="function" then EXPOSED.tpToMouse() end end, desc="TP al cursor" },
+    TP_Player   = { call = function(name) if typeof(EXPOSED.tpToPlayer)=="function" then EXPOSED.tpToPlayer(name) end end, desc="TP a jugador" },
+    WP_Add      = { call = function() if typeof(EXPOSED.addWaypoint)=="function" then EXPOSED.addWaypoint() end end, desc="Guardar waypoint" },
+    WP_Goto     = { call = function(idx) if typeof(EXPOSED.gotoWaypoint)=="function" then EXPOSED.gotoWaypoint(idx) end end, desc="Ir a waypoint" },
+    WP_Remove   = { call = function(idx) if typeof(EXPOSED.removeWaypoint)=="function" then EXPOSED.removeWaypoint(idx) end end, desc="Borrar waypoint" },
+}
+
+local function hasToggle(name)
+    local t = API[name]
+    if not t then return false end
+    return typeof(t.get)=="function" and typeof(t.on)=="function" and typeof(t.off)=="function"
+end
+local function hasCall(name) return API[name] and typeof(API[name].call)=="function" end
+local function hasSet(name)  return API[name] and typeof(API[name].set)=="function" and typeof(API[name].get)=="function" end
+
+-- ============ Servicios Roblox ============
 local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-local PathfindingService = game:GetService("PathfindingService")
-local PhysicsService = game:GetService("PhysicsService")
-local Workspace = game:GetService("Workspace")
-local player = Players.LocalPlayer
 
--- ===== Helpers =====
-local function safe(f, ...) local ok, r = pcall(f, ...); return ok, r end
-local function notify(t, d) safe(function() StarterGui:SetCore("SendNotification",{Title="Ultra Stealth",Text=t,Duration=d or 2}) end) end
-local function clamp(v, lo, hi) if v<lo then return lo elseif v>hi then return hi else return v end end
-local function now() return os.clock() end
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local function getChar()
-    local c = player.Character or player.CharacterAdded:Wait()
-    return c, c:WaitForChild("Humanoid"), c:WaitForChild("HumanoidRootPart")
-end
-local function safeConnect(box, signal, fn)
-    local c = signal:Connect(fn); table.insert(box, c); return c
-end
-local function disconnectAll(t) for _, c in ipairs(t) do safe(function() c:Disconnect() end) end; table.clear(t) end
-
--- ===== Persistencia (global y por juego) =====
-local function hasFS()
-    return (typeof(isfile)=="function" and typeof(writefile)=="function" and typeof(readfile)=="function" and typeof(makefolder)=="function")
-end
-local gameId = tostring(game.PlaceId or game.GameId or "global")
-local baseCfg = {
-    speedWalk=16, stepWalk=2, minWalk=8,  maxWalk=300,
-    speedSprint=80, stepSprint=5, minSprint=16, maxSprint=800,
-    speedFly=60, stepFly=10, minFly=10, maxFly=1200,
-    flyEngine="Body", -- "Body" / "Align"
-    dmgGuard = { antiStun=true, antiHazard=true, dodge=true, noHitBubble=true, autoGhostOnHit=true, antiVoid=true, dodgeRadius=14, dodgeSide=10, hitDrop=20, ghostSeconds=3 },
-    hazardNames={"kill","lava","void","dead","toxic","acid","die","damage"},
-    tpMode="Blink", tpTweenSpeed=80, tpBlinkStep=18, tpBlinkDelay=0.02, tpSafe=true,
-    uiVisible=true,
-    antiTeleportBack = { enabled=true, threshold=35, action="ghost" }, -- "revert"|"ghost"|"mark"
-    perGame=true
-}
-getgenv().UltraStealthCfg = getgenv().UltraStealthCfg or {}
-local CFG = getgenv().UltraStealthCfg
-
-local function deepCopy(t) local n={} for k,v in pairs(t) do n[k]=type(v)=="table" and deepCopy(v) or v end return n end
-local function merge(dst, src) for k,v in pairs(src) do if type(v)=="table" then dst[k]=dst[k] or {}; merge(dst[k],v) else if dst[k]==nil then dst[k]=v end end end return dst end
-
--- load per-game
-local function cfgPath() return "UltraStealth/"..gameId..".json" end
-if not CFG.__inited then
-    merge(CFG, deepCopy(baseCfg))
-    if hasFS() then
-        if not isfolder("UltraStealth") then safe(makefolder, "UltraStealth") end
-        if isfile(cfgPath()) then
-            local ok, js = safe(readfile, cfgPath())
-            if ok then local ok2, tbl = pcall(function() return HttpService:JSONDecode(js) end)
-                if ok2 and type(tbl)=="table" then merge(CFG, tbl) end
-            end
-        end
+-- ============ UI Builder ============
+local function new(inst, props, children)
+    local o = Instance.new(inst)
+    if props then
+        for k,v in pairs(props) do o[k]=v end
     end
-    CFG.__inited=true
-end
-local function saveCfg()
-    if not hasFS() or CFG.perGame==false then return end
-    local ok, js = pcall(function() return HttpService:JSONEncode(CFG) end)
-    if ok then safe(writefile, cfgPath(), js) end
+    if children then
+        for _,c in ipairs(children) do c.Parent = o end
+    end
+    return o
 end
 
--- ===== Estado =====
-local State = {
-    noclip=false, fly=false, sprint=false, invisRep=false, ghost=false, autoStealth=false,
-    restoreHits=0, lastRestoreWindowStart=0, lastHealth=nil, safePos=nil,
-    userMoveTick=0, lastCFrame= nil
+local colors = {
+    bg = Color3.fromRGB(18,18,22),
+    panel = Color3.fromRGB(26,26,32),
+    accent = Color3.fromRGB(0,170,120),
+    accentOff = Color3.fromRGB(140,50,60),
+    accentIdle = Color3.fromRGB(60,60,70),
+    text = Color3.fromRGB(235,235,240),
+    sub = Color3.fromRGB(180,180,190),
+    line = Color3.fromRGB(50,50,60),
+    tab = Color3.fromRGB(35,35,42),
 }
-local Conns = {noclip={}, fly={}, input={}, char={}, invis={}, ghost={}, monitor={}, meta={}, ui={}, guard={}, tp={}, antiTP={}}
-local realChar, realHum, realHrp = getChar()
-local ctrlChar, ctrlHum, ctrlHrp = realChar, realHum, realHrp
 
--- ===== Collision Group (No-Hit Bubble) =====
-local CG = { group="USH_Ghost", ready=false }
-local function ensureGroup()
-    if CG.ready then return true end
-    local ok = true
-    safe(function()
-        local groups = PhysicsService:GetCollisionGroups()
-        local exists=false
-        for _,g in ipairs(groups) do if g.name == CG.group then exists=true end end
-        if not exists then PhysicsService:CreateCollisionGroup(CG.group) end
-        PhysicsService:CollisionGroupSetCollidable(CG.group, "Default", false)
-        PhysicsService:CollisionGroupSetCollidable(CG.group, CG.group, false)
+local function makeDraggable(frame, dragArea)
+    dragArea = dragArea or frame
+    local dragging=false
+    local startPos, startInput
+    dragArea.InputBegan:Connect(function(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            startPos = input.Position
+            startInput = input
+        end
     end)
-    CG.ready = ok
-    return ok
-end
-local function setGroup(model, group)
-    for _, v in ipairs(model:GetDescendants()) do
-        if v:IsA("BasePart") then safe(function() PhysicsService:SetPartCollisionGroup(v, group) end) end
-    end
+    dragArea.InputEnded:Connect(function(input)
+        if input==startInput then dragging=false end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input==startInput or input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
+            local delta = input.Position - startPos
+            frame.Position = UDim2.fromScale(math.clamp(frame.Position.X.Scale + delta.X / workspace.CurrentCamera.ViewportSize.X,0,1),
+                                             math.clamp(frame.Position.Y.Scale + delta.Y / workspace.CurrentCamera.ViewportSize.Y,0,1))
+            startPos = input.Position
+            ENV.USH_CFG.guiPos = {frame.Position.X.Scale, frame.Position.Y.Scale}
+        end
+    end)
 end
 
--- ===== Server invis (heurística) =====
-local ServerInvis = { remote=nil, onArgs={true}, offArgs={false}, found={} }
-local function scanInvisRemotes()
-    local hits={}
-    for _, inst in ipairs(game:GetDescendants()) do
-        if inst:IsA("RemoteEvent") or inst:IsA("RemoteFunction") then
-            local n=inst.Name:lower()
-            if n:find("invis") or n:find("cloak") or n:find("stealth") or n:find("hide") or n:find("vanish") or n:find("ghost") or n:find("morph") then
-                table.insert(hits, inst)
-            end
-        end
-    end
-    ServerInvis.found = hits
+-- ============ Root GUI ============
+local Screen = new("ScreenGui", {
+    Name="UltraTouchGUI",
+    ResetOnSpawn=false,
+    IgnoreGuiInset=true,
+    ZIndexBehavior=Enum.ZIndexBehavior.Global,
+})
+Screen.Parent = PlayerGui
+
+local UIScale = new("UIScale", { Scale = ENV.USH_CFG.uiScale or 1.0 })
+UIScale.Parent = Screen
+
+local Root = new("Frame", {
+    Name="Root",
+    BackgroundColor3 = colors.bg,
+    BackgroundTransparency = 1 - (ENV.USH_CFG.opacity or 0.9),
+    Position = UDim2.fromScale(ENV.USH_CFG.guiPos[1] or 0.05, ENV.USH_CFG.guiPos[2] or 0.15),
+    Size = UDim2.new(0, 420, 0, 480),
+})
+Root.Parent = Screen
+
+local Corner = new("UICorner", { CornerRadius = UDim.new(0,12) }); Corner.Parent = Root
+new("UIStroke", {Thickness=1, Color=colors.line, Transparency=0.4}).Parent = Root
+
+local TopBar = new("Frame", {
+    BackgroundColor3 = colors.tab,
+    Size = UDim2.new(1,0,0,48),
+    BorderSizePixel=0,
+})
+TopBar.Parent = Root
+new("UICorner", {CornerRadius=UDim.new(0,12)}).Parent = TopBar
+
+local Title = new("TextLabel", {
+    Text = "Ultra Stealth • Touch",
+    Font = Enum.Font.GothamSemibold,
+    TextSize = 18,
+    TextColor3 = colors.text,
+    BackgroundTransparency=1,
+    Position = UDim2.new(0,16,0,0),
+    Size = UDim2.new(0.6,0,1,0),
+    TextXAlignment=Enum.TextXAlignment.Left,
+})
+Title.Parent = TopBar
+
+local CloseBtn = new("TextButton", {
+    Text="✕",
+    Font=Enum.Font.GothamBold, TextSize=18,
+    TextColor3=colors.text,
+    BackgroundTransparency=1,
+    Size=UDim2.new(0,48,1,0),
+    Position=UDim2.new(1,-48,0,0),
+})
+CloseBtn.Parent = TopBar
+
+local TabBar = new("Frame", {
+    BackgroundColor3 = colors.tab,
+    Size = UDim2.new(1,0,0,40),
+    Position = UDim2.new(0,0,0,48),
+    BorderSizePixel=0,
+})
+TabBar.Parent = Root
+
+local Content = new("Frame", {
+    BackgroundColor3 = colors.panel,
+    Position = UDim2.new(0,0,0,88),
+    Size = UDim2.new(1,0,1,-88),
+    BorderSizePixel=0,
+})
+Content.Parent = Root
+new("UIStroke",{Thickness=1,Color=colors.line,Transparency=0.25}).Parent = Content
+
+local Scroll = new("ScrollingFrame", {
+    BackgroundTransparency=1,
+    Size = UDim2.new(1,0,1,0),
+    CanvasSize = UDim2.new(0,0,0,0),
+    ScrollBarThickness = 6,
+    BorderSizePixel=0,
+})
+Scroll.Parent = Content
+
+local Layout = new("UIListLayout", {
+    Padding = UDim.new(0,10),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+})
+Layout.Parent = Scroll
+
+local Padding = new("UIPadding", {
+    PaddingLeft = UDim.new(0,12),
+    PaddingRight = UDim.new(0,12),
+    PaddingTop = UDim.new(0,12),
+    PaddingBottom = UDim.new(0,12),
+})
+Padding.Parent = Scroll
+
+local function updateCanvas()
+    Scroll.CanvasSize = UDim2.new(0,0,0, Layout.AbsoluteContentSize.Y + 24)
 end
-local function serverInvis(on)
-    local ok=false
-    if ServerInvis.remote then
-        ok = safe(function()
-            if ServerInvis.remote:IsA("RemoteEvent") then
-                ServerInvis.remote:FireServer(unpack(on and ServerInvis.onArgs or ServerInvis.offArgs))
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas)
+
+makeDraggable(Root, TopBar)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    Screen.Enabled = false
+end)
+
+-- ============ Componentes ============
+local function pill(color)
+    local p = new("Frame", {BackgroundColor3=color, Size=UDim2.new(1,0,0,46), BorderSizePixel=0})
+    new("UICorner",{CornerRadius=UDim.new(0,10)}).Parent = p
+    new("UIStroke",{Thickness=1,Color=colors.line,Transparency=0.3}).Parent = p
+    return p
+end
+
+local function label(parent, text, sub)
+    local l = new("TextLabel", {
+        BackgroundTransparency=1,
+        Text=text,
+        Font=Enum.Font.GothamSemibold,
+        TextSize=16,
+        TextXAlignment=Enum.TextXAlignment.Left,
+        TextColor3=colors.text,
+        Position=UDim2.new(0,14,0,6),
+        Size=UDim2.new(1,-160,0,20),
+    })
+    l.Parent = parent
+    if sub then
+        local s = new("TextLabel", {
+            BackgroundTransparency=1,
+            Text=sub,
+            Font=Enum.Font.Gotham,
+            TextSize=12,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            TextColor3=colors.sub,
+            Position=UDim2.new(0,14,0,24),
+            Size=UDim2.new(1,-160,0,18),
+        })
+        s.Parent = parent
+    end
+    return l
+end
+
+local function makeToggle(name, desc, getFn, onFn, offFn)
+    local enabled = typeof(getFn)=="function" and (getFn() and true or false) or false
+    local available = typeof(getFn)=="function" and typeof(onFn)=="function" and typeof(offFn)=="function"
+    local p = pill(colors.panel)
+    p.Parent = Scroll
+
+    label(p, name, desc .. (available and "" or " (API no encontrada)"))
+
+    local btn = new("TextButton", {
+        Text = enabled and "ON" or "OFF",
+        Font = Enum.Font.GothamBold,
+        TextSize=16,
+        TextColor3=Color3.fromRGB(255,255,255),
+        BackgroundColor3 = available and (enabled and colors.accent or colors.accentOff) or colors.accentIdle,
+        Size=UDim2.new(0,100,0,34),
+        Position=UDim2.new(1,-114,0,6),
+    })
+    btn.Parent = p
+    new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent = btn
+
+    if not available then
+        btn.AutoButtonColor=false
+        btn.Text="N/A"
+        btn.TextColor3=Color3.fromRGB(220,220,220)
+    else
+        btn.MouseButton1Click:Connect(function()
+            local now = getFn()
+            if now then offFn() else onFn() end
+            local st = getFn()
+            btn.Text = st and "ON" or "OFF"
+            btn.BackgroundColor3 = st and colors.accent or colors.accentOff
+        end)
+    end
+
+    return p
+end
+
+local function makeStepper(name, desc, getFn, setFn, min, max, step)
+    local available = typeof(getFn)=="function" and typeof(setFn)=="function"
+    local p = pill(colors.panel); p.Size = UDim2.new(1,0,0,56); p.Parent = Scroll
+    label(p, name, desc .. (available and "" or " (API no encontrada)"))
+
+    local minus = new("TextButton", {
+        Text = "−", Font=Enum.Font.GothamBold, TextSize=20,
+        TextColor3=colors.text,
+        BackgroundColor3 = available and colors.tab or colors.accentIdle,
+        Size=UDim2.new(0,40,0,34), Position=UDim2.new(1,-220,0,10),
+    })
+    local valBox = new("TextBox", {
+        Text = available and tostring(getFn()) or "--",
+        PlaceholderText = "--",
+        Font=Enum.Font.GothamSemibold, TextSize=16,
+        TextColor3=colors.text,
+        BackgroundColor3 = colors.tab,
+        Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-170,0,10),
+        ClearTextOnFocus=false,
+    })
+    local plus = new("TextButton", {
+        Text = "+", Font=Enum.Font.GothamBold, TextSize=20,
+        TextColor3=colors.text,
+        BackgroundColor3 = available and colors.tab or colors.accentIdle,
+        Size=UDim2.new(0,40,0,34), Position=UDim2.new(1,-60,0,10),
+    })
+    minus.Parent=p; valBox.Parent=p; plus.Parent=p
+    for _,b in ipairs({minus,plus,valBox}) do new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=b end
+
+    local function clamp(v)
+        v = math.clamp(v, min, max)
+        local s = step or 1
+        v = math.floor((v + (s/2)) / s) * s
+        return v
+    end
+
+    if available then
+        local function setFrom(delta)
+            local cur = tonumber(getFn()) or min
+            local nv = clamp(cur + delta)
+            setFn(nv)
+            valBox.Text = tostring(nv)
+        end
+        minus.MouseButton1Click:Connect(function() setFrom(-(step or 1)) end)
+        plus.MouseButton1Click:Connect(function() setFrom( (step or 1)) end)
+        valBox.FocusLost:Connect(function(enter)
+            local v = tonumber(valBox.Text)
+            if v then
+                v = clamp(v)
+                setFn(v)
+                valBox.Text = tostring(v)
             else
-                ServerInvis.remote:InvokeServer(unpack(on and ServerInvis.onArgs or ServerInvis.offArgs))
+                valBox.Text = tostring(getFn())
             end
         end)
     else
-        for _, r in ipairs(ServerInvis.found) do
-            ok = safe(function()
-                if r:IsA("RemoteEvent") then r:FireServer(on) else r:InvokeServer(on) end
-            end)
-            if ok then ServerInvis.remote=r; break end
-        end
+        minus.AutoButtonColor=false
+        plus.AutoButtonColor=false
+        valBox.TextEditable=false
     end
-    return ok
+
+    return p
 end
 
--- ===== Apariencia & Anti-restore (igual que Ultimate, robustecido) =====
-local Appearance = {
-    partT={}, decalT={}, accT={}, clothing={}, castShadow={}, faceDecalT={},
-    highlightE={}, beamE={}, trailE={}, particleE={}, billboardE={}, humName=nil
+local function makeTabButton(text, order)
+    local b = new("TextButton", {
+        Text=text, Font=Enum.Font.GothamSemibold, TextSize=14,
+        TextColor3=colors.text,
+        BackgroundColor3=colors.tab,
+        Size=UDim2.new(0,100,1,0),
+        Position=UDim2.new(0,(order-1)*104,0,0),
+        AutoButtonColor=true,
+    })
+    b.Parent = TabBar
+    new("UIStroke",{Color=colors.line,Transparency=0.6,Thickness=1}).Parent = b
+    return b
+end
+
+-- ============ Tabs ============
+local tabs = {
+    {name="Movimiento", build=function()
+        makeToggle("Noclip", API.Noclip.desc, API.Noclip.get, API.Noclip.on, API.Noclip.off)
+        makeToggle("Fly", API.Fly.desc, API.Fly.get, API.Fly.on, API.Fly.off)
+        makeToggle("Sprint", API.Sprint.desc, API.Sprint.get, API.Sprint.on, API.Sprint.off)
+
+        makeStepper("WalkSpeed", API.WalkSpeed.desc, API.WalkSpeed.get, API.WalkSpeed.set, API.WalkSpeed.min, API.WalkSpeed.max, API.WalkSpeed.step)
+        makeStepper("SprintSpeed", API.SprintSpeed.desc, API.SprintSpeed.get, API.SprintSpeed.set, API.SprintSpeed.min, API.SprintSpeed.max, API.SprintSpeed.step)
+        makeStepper("FlySpeed", API.FlySpeed.desc, API.FlySpeed.get, API.FlySpeed.set, API.FlySpeed.min, API.FlySpeed.max, API.FlySpeed.step)
+    end},
+    {name="Stealth", build=function()
+        makeToggle("Invis", API.Invis.desc, API.Invis.get, API.Invis.on, API.Invis.off)
+        makeToggle("Ghost", API.Ghost.desc, API.Ghost.get, API.Ghost.on, API.Ghost.off)
+    end},
+    {name="Defensa", build=function()
+        makeToggle("NoHit", API.NoHit.desc, API.NoHit.get, API.NoHit.on, API.NoHit.off)
+        makeToggle("AntiRestore", API.AntiRestore.desc, API.AntiRestore.get, API.AntiRestore.on, API.AntiRestore.off)
+    end},
+    {name="Teleport", build=function()
+        -- Modo TP
+        local p1 = pill(colors.panel); p1.Parent = Scroll
+        label(p1, "Modo TP", "Cambia entre modos configurados")
+        local bMode = new("TextButton", {
+            Text = "Cambiar",
+            Font = Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("TP_ModeNext") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-114,0,6),
+        })
+        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bMode; bMode.Parent=p1
+        if hasCall("TP_ModeNext") then
+            bMode.MouseButton1Click:Connect(function() API.TP_ModeNext.call() end)
+        else bMode.AutoButtonColor=false; bMode.Text="N/A" end
+
+        -- TP al cursor
+        local p2 = pill(colors.panel); p2.Parent = Scroll
+        label(p2, "TP al cursor", "Teleporta hacia la posición del cursor")
+        local bMouse = new("TextButton", {
+            Text = "TP",
+            Font = Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("TP_Mouse") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,100,0,34), Position=UDim2.new(1,-114,0,6),
+        })
+        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bMouse; bMouse.Parent=p2
+        if hasCall("TP_Mouse") then
+            bMouse.MouseButton1Click:Connect(function() API.TP_Mouse.call() end)
+        else bMouse.AutoButtonColor=false; bMouse.Text="N/A" end
+
+        -- TP a jugador
+        local p3 = pill(colors.panel); p3.Size=UDim2.new(1,0,0,70); p3.Parent = Scroll
+        label(p3, "TP a jugador", "Escribe el nombre exacto o parcial")
+        local nameBox = new("TextBox", {
+            PlaceholderText="Nombre del jugador",
+            Font=Enum.Font.Gotham, TextSize=14, TextColor3=colors.text,
+            BackgroundColor3=colors.tab, ClearTextOnFocus=false,
+            Size=UDim2.new(1,-130,0,34), Position=UDim2.new(0,14,0,28),
+        })
+        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=nameBox; nameBox.Parent=p3
+        local bTP = new("TextButton", {
+            Text="TP", Font=Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("TP_Player") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,80,0,34), Position=UDim2.new(1,-94,0,28),
+        })
+        new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bTP; bTP.Parent=p3
+        if hasCall("TP_Player") then
+            bTP.MouseButton1Click:Connect(function()
+                local q = nameBox.Text
+                if q and #q>0 then API.TP_Player.call(q) end
+            end)
+        else bTP.AutoButtonColor=false; bTP.Text="N/A" end
+
+        -- Waypoints
+        local p4 = pill(colors.panel); p4.Parent = Scroll
+        label(p4, "Waypoints", "Guardar / ir / borrar (usa índice)")
+        local idxBox = new("TextBox", {
+            PlaceholderText="Índice",
+            Font=Enum.Font.Gotham, TextSize=14, TextColor3=colors.text,
+            BackgroundColor3=colors.tab, ClearTextOnFocus=false,
+            Size=UDim2.new(0,70,0,34), Position=UDim2.new(0,14,0,6),
+        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=idxBox; idxBox.Parent=p4
+
+        local bAdd = new("TextButton", {Text="Guardar", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("WP_Add") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,90,0,34), Position=UDim2.new(0,94,0,6),
+        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bAdd; bAdd.Parent=p4
+        local bGo = new("TextButton", {Text="Ir", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("WP_Goto") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,60,0,34), Position=UDim2.new(0,194,0,6),
+        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bGo; bGo.Parent=p4
+        local bDel = new("TextButton", {Text="Borrar", Font=Enum.Font.GothamSemibold, TextSize=14, TextColor3=colors.text,
+            BackgroundColor3 = hasCall("WP_Remove") and colors.tab or colors.accentIdle,
+            Size=UDim2.new(0,90,0,34), Position=UDim2.new(0,264,0,6),
+        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=bDel; bDel.Parent=p4
+
+        if hasCall("WP_Add") then
+            bAdd.MouseButton1Click:Connect(function() API.WP_Add.call() end)
+        else bAdd.AutoButtonColor=false; bAdd.Text="N/A" end
+
+        if hasCall("WP_Goto") then
+            bGo.MouseButton1Click:Connect(function()
+                local idx = tonumber(idxBox.Text)
+                if idx then API.WP_Goto.call(idx) end
+            end)
+        else bGo.AutoButtonColor=false; bGo.Text="N/A" end
+
+        if hasCall("WP_Remove") then
+            bDel.MouseButton1Click:Connect(function()
+                local idx = tonumber(idxBox.Text)
+                if idx then API.WP_Remove.call(idx) end
+            end)
+        else bDel.AutoButtonColor=false; bDel.Text="N/A" end
+    end},
+    {name="Ajustes", build=function()
+        -- Opacidad
+        makeStepper("Opacidad UI", "Transparencia del panel (0.4 - 1.0)", function()
+            return math.floor((ENV.USH_CFG.opacity or 0.9)*100+0.5)
+        end, function(v)
+            ENV.USH_CFG.opacity = math.clamp(v/100, 0.4, 1.0)
+            Root.BackgroundTransparency = 1 - ENV.USH_CFG.opacity
+        end, 40, 100, 5)
+
+        -- Escala
+        makeStepper("Escala UI", "Tamaño global de la interfaz (50 - 150%)", function()
+            return math.floor((ENV.USH_CFG.uiScale or 1.0)*100 + 0.5)
+        end, function(v)
+            ENV.USH_CFG.uiScale = math.clamp(v/100, 0.5, 1.5)
+            UIScale.Scale = ENV.USH_CFG.uiScale
+        end, 50, 150, 5)
+
+        -- Recentrar UI
+        local p = pill(colors.panel); p.Parent=Scroll
+        label(p, "Posición", "Recentrar/mostrar GUI")
+        local b = new("TextButton",{
+            Text="Recentrar",
+            Font=Enum.Font.GothamBold, TextSize=16, TextColor3=colors.text,
+            BackgroundColor3=colors.tab, Size=UDim2.new(0,110,0,34), Position=UDim2.new(1,-124,0,6),
+        }); new("UICorner",{CornerRadius=UDim.new(0,8)}).Parent=b; b.Parent=p
+        b.MouseButton1Click:Connect(function()
+            Root.Position = UDim2.fromScale(0.05, 0.15)
+            ENV.USH_CFG.guiPos = {0.05, 0.15}
+            Screen.Enabled = true
+        end)
+    end},
 }
-local function hideServer(c)
-    local h = c:FindFirstChildOfClass("Humanoid")
-    for _, d in ipairs(c:GetDescendants()) do
-        if d:IsA("BasePart") then
-            if Appearance.partT[d]==nil then Appearance.partT[d]=d.Transparency end
-            if Appearance.castShadow[d]==nil then Appearance.castShadow[d]=d.CastShadow end
-            d.Transparency=1; d.Reflectance=0; d.CastShadow=false
-        elseif d:IsA("Decal") then if Appearance.decalT[d]==nil then Appearance.decalT[d]=d.Transparency end; d.Transparency=1
-        elseif d:IsA("Accessory") then
-            local handle=d:FindFirstChild("Handle")
-            if handle then
-                if Appearance.accT[handle]==nil then Appearance.accT[handle]=handle.Transparency end
-                handle.Transparency=1
-                for _, dd in ipairs(handle:GetDescendants()) do
-                    if dd:IsA("Decal") then if Appearance.decalT[dd]==nil then Appearance.decalT[dd]=dd.Transparency end; dd.Transparency=1 end
-                end
-            end
-        elseif d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
-            if Appearance.clothing[d]==nil then Appearance.clothing[d] = d:IsA("Shirt") and d.ShirtTemplate or d:IsA("Pants") and d.PantsTemplate or d.Graphic end
-            if d:IsA("Shirt") then d.ShirtTemplate="" end
-            if d:IsA("Pants") then d.PantsTemplate="" end
-            if d:IsA("ShirtGraphic") then d.Graphic="" end
-        elseif d:IsA("Highlight") then if Appearance.highlightE[d]==nil then Appearance.highlightE[d]=d.Enabled end; d.Enabled=false
-        elseif d:IsA("Beam") then if Appearance.beamE[d]==nil then Appearance.beamE[d]=d.Enabled end; d.Enabled=false
-        elseif d:IsA("Trail") then if Appearance.trailE[d]==nil then Appearance.trailE[d]=d.Enabled end; d.Enabled=false
-        elseif d:IsA("ParticleEmitter") then if Appearance.particleE[d]==nil then Appearance.particleE[d]=d.Enabled end; d.Enabled=false
-        elseif d:IsA("BillboardGui") or d:IsA("SurfaceGui") then if Appearance.billboardE[d]==nil then Appearance.billboardE[d]=d.Enabled end; d.Enabled=false
-        end
-    end
-    local head=c:FindFirstChild("Head")
-    if head then local face=head:FindFirstChildOfClass("Decal"); if face then if Appearance.faceDecalT[face]==nil then Appearance.faceDecalT[face]=face.Transparency end; face.Transparency=1 end end
-    if h then
-        if not Appearance.humName then Appearance.humName = { DisplayDistanceType=h.DisplayDistanceType, NameDisplayDistance=h.NameDisplayDistance } end
-        safe(function() h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
-        safe(function() h.NameDisplayDistance = 0 end)
+
+-- Tab buttons
+local tabButtons = {}
+local currentTab = 1
+
+local function clearContent()
+    for _,c in ipairs(Scroll:GetChildren()) do
+        if c:IsA("GuiObject") then c:Destroy() end
     end
 end
-local function showServer(c)
-    local h=c:FindFirstChildOfClass("Humanoid")
-    for inst,t in pairs(Appearance.partT) do if inst and inst.Parent then inst.Transparency=t end end
-    for inst,t in pairs(Appearance.decalT) do if inst and inst.Parent then inst.Transparency=t end end
-    for inst,t in pairs(Appearance.accT) do if inst and inst.Parent then inst.Transparency=t end end
-    for inst,v in pairs(Appearance.castShadow) do if inst and inst.Parent then inst.CastShadow=v end end
-    for cloth,val in pairs(Appearance.clothing) do
-        if cloth and cloth.Parent then
-            if cloth:IsA("Shirt") then cloth.ShirtTemplate=val end
-            if cloth:IsA("Pants") then cloth.PantsTemplate=val end
-            if cloth:IsA("ShirtGraphic") then cloth.Graphic=val end
-        end
-    end
-    for inst,e in pairs(Appearance.highlightE) do if inst and inst.Parent then inst.Enabled=e end end
-    for inst,e in pairs(Appearance.beamE) do if inst and inst.Parent then inst.Enabled=e end end
-    for inst,e in pairs(Appearance.trailE) do if inst and inst.Parent then inst.Enabled=e end end
-    for inst,e in pairs(Appearance.particleE) do if inst and inst.Parent then inst.Enabled=e end end
-    for inst,e in pairs(Appearance.billboardE) do if inst and inst.Parent then inst.Enabled=e end end
-    for inst,t in pairs(Appearance.faceDecalT) do if inst and inst.Parent then inst.Transparency=t end end
-    if h and Appearance.humName then
-        safe(function() h.DisplayDistanceType = Appearance.humName.DisplayDistanceType end)
-        safe(function() h.NameDisplayDistance = Appearance.humName.NameDisplayDistance end)
-    end
+local function buildTab(index)
+    currentTab = index
+    clearContent()
+    tabs[index].build()
+    updateCanvas()
 end
 
-local function monitorRestore(c)
-    disconnectAll(Conns.monitor)
-    local function flagRestore()
-        local t=now()
-        if t - State.lastRestoreWindowStart > 2 then State.lastRestoreWindowStart=t; State.restoreHits=0 end
-        State.restoreHits += 1
-        if State.autoStealth and State.restoreHits >= 3 and not State.ghost then
-            if State.invisRep then State.invisRep=false end
-            safe(hideServer, realChar)
-            task.defer(function() notify("Servidor revirtiendo. Cambiando a Ghost.", 2) end)
-            _G.__triggerGhostOn()
-        end
-    end
-    safeConnect(Conns.monitor, c.DescendantAdded, function()
-        if State.invisRep then task.defer(function() hideServer(c); flagRestore() end) end
-    end)
-    for _, d in ipairs(c:GetDescendants()) do
-        if d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Accessory") or d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
-            safeConnect(Conns.monitor, d.Changed, function(prop)
-                if not State.invisRep then return end
-                if prop=="Transparency" or prop=="ShirtTemplate" or prop=="PantsTemplate" or prop=="Graphic" then
-                    hideServer(c); flagRestore()
-                end
-            end)
-        end
-    end
-end
-
-local function invisRepOn()
-    if State.invisRep then return end
-    State.invisRep=true
-    serverInvis(true)
-    hideServer(realChar)
-    monitorRestore(realChar)
-    safeConnect(Conns.invis, RunService.Heartbeat, function()
-        if State.invisRep and realChar and realChar.Parent then hideServer(realChar) end
-    end)
-end
-local function invisRepOff()
-    if not State.invisRep then return end
-    State.invisRep=false
-    disconnectAll(Conns.invis); disconnectAll(Conns.monitor)
-    safe(showServer, realChar)
-    serverInvis(false)
-end
-
--- ===== Ghost =====
-local ghostModel, camPrevSubj
-local function makeGhost()
-    local ok, model = safe(function() return Players:CreateHumanoidModelFromUserId(player.UserId) end)
-    if ok and model then return model end
-    local clone = realChar:Clone()
-    for _, d in ipairs(clone:GetDescendants()) do if d:IsA("Script") or d:IsA("LocalScript") then d:Destroy() end end
-    return clone
-end
-local function ghostOn()
-    if State.ghost then return end
-    State.ghost=true
-    ghostModel = makeGhost(); ghostModel.Name="Ghost_"..player.Name; ghostModel.Parent = workspace
-    local gHum = ghostModel:FindFirstChildOfClass("Humanoid") or Instance.new("Humanoid", ghostModel)
-    local gRoot = ghostModel:WaitForChild("HumanoidRootPart")
-    ghostModel:MoveTo(realHrp.Position + Vector3.new(0,2,0))
-    camPrevSubj = workspace.CurrentCamera.CameraSubject; workspace.CurrentCamera.CameraSubject = gHum
-    safe(function()
-        realHrp.Anchored=true; realHum.PlatformStand=true
-        realHrp.CFrame = CFrame.new(0,-10000,0)
-        hideServer(realChar)
-    end)
-    ctrlChar, ctrlHum, ctrlHrp = ghostModel, gHum, gRoot
-    safeConnect(Conns.ghost, RunService.Heartbeat, function()
-        if not State.ghost then return end
-        if realHrp and realHrp.Parent and realHrp.Position.Y > -9000 then
-            realHrp.CFrame = CFrame.new(0,-10000,0)
-        end
-    end)
-end
-_G.__triggerGhostOn = ghostOn
-local function ghostOff()
-    if not State.ghost then return end
-    State.ghost=false
-    disconnectAll(Conns.ghost)
-    local backPos = (ctrlHrp and ctrlHrp.Position) or (realHrp.Position + Vector3.new(0,3,0))
-    if ghostModel and ghostModel.Parent then ghostModel:Destroy() end
-    safe(function()
-        realHrp.Anchored=false; realHum.PlatformStand=false
-        realHrp.CFrame = CFrame.new(backPos + Vector3.new(0,2,0))
-    end)
-    if camPrevSubj then workspace.CurrentCamera.CameraSubject = camPrevSubj end
-    ctrlChar, ctrlHum, ctrlHrp = realChar, realHum, realHrp
-end
-
--- ===== Noclip & No-Hit =====
-local function setNoCollide(model,on) for _, v in ipairs(model:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = not on; if on then v.CanTouch=false end end end end
-local function noclipOn()
-    if State.noclip then return end
-    State.noclip=true
-    setNoCollide(ctrlChar,true)
-    if CFG.dmgGuard.noHitBubble and ensureGroup() then setGroup(ctrlChar, CG.group) end
-    safeConnect(Conns.noclip, RunService.Stepped, function()
-        if State.noclip and ctrlChar and ctrlChar.Parent then
-            setNoCollide(ctrlChar,true)
-            if CFG.dmgGuard.noHitBubble and CG.ready then setGroup(ctrlChar, CG.group) end
-        end
-    end)
-end
-local function noclipOff()
-    if not State.noclip then return end
-    State.noclip=false; disconnectAll(Conns.noclip)
-    setNoCollide(ctrlChar,false)
-end
-
--- ===== Fly (Dual Engine) =====
-local flyBV, flyBG, alignP, alignO, att
-local moveKeys={W=false,A=false,S=false,D=false,Up=false,Down=false}
-local function computeFlyDir()
-    local cam = workspace.CurrentCamera
-    local dir = Vector3.new()
-    local cf = cam.CFrame
-    if moveKeys.W then dir += cf.LookVector end
-    if moveKeys.S then dir -= cf.LookVector end
-    if moveKeys.A then dir -= cf.RightVector end
-    if moveKeys.D then dir += cf.RightVector end
-    if moveKeys.Up then dir += Vector3.new(0,1,0) end
-    if moveKeys.Down then dir += Vector3.new(0,-1,0) end
-    return dir.Magnitude>0 and dir.Unit or Vector3.new()
-end
-local function ensureAlign(ctrlRoot)
-    if att and att.Parent ~= ctrlRoot then att:Destroy(); att=nil end
-    if not att then att = Instance.new("Attachment", ctrlRoot) end
-    if not alignP then
-        alignP = Instance.new("AlignPosition"); alignP.Attachment0=att; alignP.RigidityEnabled=false
-        alignP.MaxForce = 1e9; alignP.Responsiveness=200; alignP.ApplyAtCenterOfMass=true; alignP.Parent=ctrlRoot
-    end
-    if not alignO then
-        alignO = Instance.new("AlignOrientation"); alignO.Attachment0=att; alignO.RigidityEnabled=false
-        alignO.MaxTorque = 1e9; alignO.Responsiveness=200; alignO.Mode=Enum.OrientationAlignmentMode.OneAttachment; alignO.Parent=ctrlRoot
-    end
-end
-local function cleanupFlyObjects() if flyBV then flyBV:Destroy() flyBV=nil end if flyBG then flyBG:Destroy() flyBG=nil end if alignP then alignP:Destroy() alignP=nil end if alignO then alignO:Destroy() alignO=nil end if att then att:Destroy() att=nil end end
-local function flyOn()
-    if State.fly then return end
-    State.fly=true
-    if CFG.flyEngine=="Body" then
-        flyBV=Instance.new("BodyVelocity"); flyBV.MaxForce=Vector3.new(1e6,1e6,1e6); flyBV.P=1e4; flyBV.Velocity=Vector3.new(); flyBV.Parent=ctrlHrp
-        flyBG=Instance.new("BodyGyro"); flyBG.MaxTorque=Vector3.new(1e6,1e6,1e6); flyBG.P=3e4; flyBG.CFrame=ctrlHrp.CFrame; flyBG.Parent=ctrlHrp
-    else
-        ensureAlign(ctrlHrp)
-    end
-    ctrlHum.PlatformStand=true
-    local accum=0
-    safeConnect(Conns.fly, RunService.Heartbeat, function(dt)
-        if not State.fly or not ctrlHrp or not ctrlHum then return end
-        accum += dt
-        local stepRate = 1/90 -- micro pasos
-        if accum < stepRate then return end
-        accum = 0
-        local dir = computeFlyDir()
-        local v = dir * CFG.speedFly
-        if CFG.flyEngine=="Body" then
-            if flyBV.Parent~=ctrlHrp then flyBV.Parent=ctrlHrp end
-            if flyBG.Parent~=ctrlHrp then flyBG.Parent=ctrlHrp end
-            flyBV.Velocity = v
-            flyBG.CFrame = CFrame.new(ctrlHrp.Position, ctrlHrp.Position + workspace.CurrentCamera.CFrame.LookVector)
-        else
-            if not alignP or not alignO then ensureAlign(ctrlHrp) end
-            local target = ctrlHrp.Position + (v * (1/60))
-            alignP.Position = target
-            alignO.CFrame = CFrame.new(ctrlHrp.Position, ctrlHrp.Position + workspace.CurrentCamera.CFrame.LookVector)
-        end
-    end)
-end
-local function flyOff()
-    if not State.fly then return end
-    State.fly=false; disconnectAll(Conns.fly); cleanupFlyObjects()
-    if ctrlHum then ctrlHum.PlatformStand=false; ctrlHum:Move(Vector3.new()) end
-end
-
--- ===== Velocidades =====
-local shiftHeld=false
-local function applyWalkSpeed() if ctrlHum then ctrlHum.WalkSpeed = (State.sprint or shiftHeld) and CFG.speedSprint or CFG.speedWalk end end
-local function sprintToggle() State.sprint = not State.sprint; applyWalkSpeed(); saveCfg() end
-local function bumpWalk(delta) CFG.speedWalk = clamp(CFG.speedWalk + delta, CFG.minWalk, CFG.maxWalk); applyWalkSpeed(); notify("Walk = "..math.floor(CFG.speedWalk)); saveCfg() end
-local function bumpSprint(delta) CFG.speedSprint = clamp(CFG.speedSprint + delta, CFG.minSprint, CFG.maxSprint); applyWalkSpeed(); notify("Sprint = "..math.floor(CFG.speedSprint)); saveCfg() end
-local function bumpFly(delta) CFG.speedFly = clamp(CFG.speedFly + delta, CFG.minFly, CFG.maxFly); notify("Fly = "..math.floor(CFG.speedFly)); saveCfg() end
-local function toggleEngine() CFG.flyEngine = (CFG.flyEngine=="Body") and "Align" or "Body"; if State.fly then flyOff(); task.wait(); flyOn() end; notify("Fly Engine: "..CFG.flyEngine, 1.5); saveCfg() end
-
--- ===== Damage Guard (con No-Hit y Anti-Void, Anti-Stun, Auto-Ghost) =====
-local HazardCache=setmetatable({}, {__mode='k'})
-local function looksHazard(part)
-    if not part or not part.Parent then return false end
-    if HazardCache[part] ~= nil then return HazardCache[part] end
-    local n = (part.Name or ""):lower()
-    local hit=false
-    for _, k in ipairs(CFG.hazardNames) do if n:find(k) then hit=true break end end
-    HazardCache[part]=hit
-    return hit
-end
-local function updateSafePos()
-    if not realHrp or not realHrp.Parent then return end
-    local pos = realHrp.Position
-    if pos.Y > -1000 and pos.Y < 10000 and pos.FMagnitude ~= math.huge then State.safePos = CFrame.new(pos) end
-end
-local function dashSide(fromPos, sideDist)
-    local right = Workspace.CurrentCamera.CFrame.RightVector
-    local dir = (math.random(0,1)==0) and right or -right
-    return fromPos + dir * sideDist
-end
-local function guardStart()
-    disconnectAll(Conns.guard)
-    if CFG.dmgGuard.antiStun then
-        local ds = {Enum.HumanoidStateType.Ragdoll, Enum.HumanoidStateType.FallingDown, Enum.HumanoidStateType.PlatformStanding, Enum.HumanoidStateType.Physics, Enum.HumanoidStateType.GettingUp}
-        for _, st in ipairs(ds) do safe(function() realHum:SetStateEnabled(st, false) end) end
-    end
-    State.lastHealth = realHum and realHum.Health or nil
-    if CFG.dmgGuard.autoGhostOnHit then
-        safeConnect(Conns.guard, realHum.HealthChanged, function(hp)
-            if not State.lastHealth then State.lastHealth = hp return end
-            local drop = State.lastHealth - hp; State.lastHealth = hp
-            if drop >= CFG.dmgGuard.hitDrop and not State.ghost then
-                notify("Golpe detectado. Auto-Ghost...", 1.2)
-                ghostOn(); task.delay(CFG.dmgGuard.ghostSeconds, function() if State.ghost then ghostOff() end end)
-            end
-        end)
-    end
-    if CFG.dmgGuard.noHitBubble and ensureGroup() then
-        setGroup(realChar, CG.group)
-        safeConnect(Conns.guard, RunService.Stepped, function() if CG.ready then setGroup(realChar, CG.group) end end)
-    end
-    if CFG.dmgGuard.antiVoid then
-        safeConnect(Conns.guard, RunService.Heartbeat, function()
-            if not realHrp then return end
-            updateSafePos()
-            if realHrp.Position.Y < -200 or tostring(realHrp.CFrame):find("nan") then
-                if State.safePos then realHrp.CFrame = State.safePos + Vector3.new(0,6,0) else realHrp.CFrame=CFrame.new(0,50,0) end
-                notify("Anti-Void", 1)
-            end
-        end)
-    end
-    if CFG.dmgGuard.antiHazard then
-        safeConnect(Conns.guard, realHrp.Touched, function(hit)
-            if hit and looksHazard(hit) and State.safePos then realHrp.CFrame = State.safePos + Vector3.new(0,6,0); notify("Hazard evitado", 1) end
-        end)
-    end
-    if CFG.dmgGuard.dodge then
-        safeConnect(Conns.guard, RunService.Stepped, function()
-            if not realHrp then return end
-            local myPos=realHrp.Position
-            local nearest, nd= nil, CFG.dmgGuard.dodgeRadius
-            for _, pl in ipairs(Players:GetPlayers()) do
-                if pl~=player and pl.Character then
-                    local hrp = pl.Character:FindFirstChild("HumanoidRootPart"); local hum=pl.Character:FindFirstChildOfClass("Humanoid")
-                    if hrp and hum and hum.Health>0 then
-                        local d=(hrp.Position - myPos).Magnitude
-                        if d<nd then nearest, nd = hrp, d end
-                    end
-                end
-            end
-            if nearest then local newPos=dashSide(myPos, CFG.dmgGuard.dodgeSide); safe(function() realHrp.CFrame = CFrame.new(newPos + Vector3.new(0,2,0)) end) end
-        end)
-    end
-end
-
--- ===== Anti-Teleport-Back =====
-local userCFrameWrite=false
-local function markUserMove() State.userMoveTick = now() end
-local function antiTeleportBack()
-    disconnectAll(Conns.antiTP)
-    if not CFG.antiTeleportBack.enabled then return end
-    State.lastCFrame = realHrp.CFrame
-    safeConnect(Conns.antiTP, realHrp:GetPropertyChangedSignal("CFrame"), function()
-        if userCFrameWrite then return end
-        local oldPos = State.lastCFrame.Position
-        local newPos = realHrp.CFrame.Position
-        local jump = (newPos - oldPos).Magnitude
-        State.lastCFrame = realHrp.CFrame
-        if jump >= CFG.antiTeleportBack.threshold and (now() - State.userMoveTick) > 0.2 then
-            if CFG.antiTeleportBack.action=="revert" and State.safePos then
-                userCFrameWrite=true; realHrp.CFrame = State.safePos + Vector3.new(0,6,0); userCFrameWrite=false
-                notify("Anti-TPBack: revert", 1)
-            elseif CFG.antiTeleportBack.action=="ghost" then
-                notify("Anti-TPBack: ghost", 1); if not State.ghost then ghostOn() end
-            else
-                notify("Zona hostil marcada", 1)
-            end
+for i,t in ipairs(tabs) do
+    local b = makeTabButton(t.name, i)
+    tabButtons[i]=b
+    b.MouseButton1Click:Connect(function()
+        buildTab(i)
+        for j,bb in ipairs(tabButtons) do
+            bb.BackgroundColor3 = (j==i) and colors.panel or colors.tab
         end
     end)
 end
 
--- ===== Teleport Suite (con path y raycast) =====
-local Waypoints={}
-local function addWaypoint(name, cf) table.insert(Waypoints, {name=name or ("WP"..tostring(#Waypoints+1)), cf=cf}) end
-local function groundAt(pos)
-    local ray = RaycastParams.new(); ray.FilterType=Enum.RaycastFilterType.Blacklist; ray.FilterDescendantsInstances={realChar}
-    local hit = Workspace:Raycast(pos+Vector3.new(0,50,0), Vector3.new(0,-500,0), ray)
-    if hit then return CFrame.new(hit.Position + Vector3.new(0,3,0)) else return CFrame.new(pos) end
-end
-local function tpSnap(cf) userCFrameWrite=true; realHrp.CFrame=cf; userCFrameWrite=false; markUserMove() end
-local function tpTween(cf, speed)
-    local dist = (realHrp.Position - cf.Position).Magnitude
-    local t = math.max(0.05, dist / (speed or CFG.tpTweenSpeed))
-    local tw = TweenService:Create(realHrp, TweenInfo.new(t, Enum.EasingStyle.Linear), {CFrame = cf})
-    userCFrameWrite=true; tw:Play(); tw.Completed:Wait(); userCFrameWrite=false; markUserMove()
-end
-local function tpBlink(cf, step, delayStep)
-    local from=realHrp.Position; local to=cf.Position; local dir=(to-from); local dist=dir.Magnitude; if dist==0 then return end
-    local unit=dir.Unit; local s=step or CFG.tpBlinkStep; local n=math.max(1, math.floor(dist/s))
-    for i=1,n do
-        local target = from + unit * (s*i)
-        if CFG.tpSafe then target = groundAt(target).Position end
-        userCFrameWrite=true; realHrp.CFrame = CFrame.new(target); userCFrameWrite=false
-        task.wait(delayStep or CFG.tpBlinkDelay)
-    end
-    userCFrameWrite=true; realHrp.CFrame = cf; userCFrameWrite=false; markUserMove()
-end
-local function tpPathTo(targetPos)
-    local params = PathfindingService:CreatePath({AgentRadius=2, AgentCanJump=true})
-    params:ComputeAsync(realHrp.Position, targetPos)
-    if params.Status ~= Enum.PathStatus.Success then return false end
-    local way = params:GetWaypoints()
-    for _, w in ipairs(way) do
-        local cf = CFrame.new(w.Position) * CFrame.Angles(0,0,0)
-        if CFG.tpMode=="Tween" then tpTween(groundAt(w.Position), CFG.tpTweenSpeed)
-        elseif CFG.tpMode=="Blink" then tpBlink(groundAt(w.Position), CFG.tpBlinkStep, CFG.tpBlinkDelay)
-        else tpSnap(groundAt(w.Position)) end
-    end
-    return true
-end
-local function tpToCFrame(cf, mode)
-    mode = mode or CFG.tpMode
-    if mode=="Snap" then tpSnap(cf)
-    elseif mode=="Tween" then tpTween(cf, CFG.tpTweenSpeed)
-    else tpBlink(cf, CFG.tpBlinkStep, CFG.tpBlinkDelay) end
-end
-local function tpToMouse(mode)
-    local mouse = player:GetMouse(); if not mouse.Hit then return end
-    local pos = mouse.Hit.Position
-    if CFG.tpSafe then pos = groundAt(pos).Position end
-    if not tpPathTo(pos) then tpToCFrame(CFrame.new(pos), mode) end
-end
-local function findPlayer(q)
-    if not q or q=="" then return nil end; q=q:lower()
-    for _, pl in ipairs(Players:GetPlayers()) do
-        if pl~=player and ((pl.Name:lower():find(q)) or (pl.DisplayName and pl.DisplayName:lower():find(q))) then return pl end
-    end
-    return nil
-end
-local function tpToPlayer(q, mode)
-    local pl = findPlayer(q); if not pl or not pl.Character then notify("Jugador no encontrado",1.2) return end
-    local hrp = pl.Character:FindFirstChild("HumanoidRootPart"); if not hrp then notify("Sin HRP",1.2) return end
-    local pos = hrp.Position + Vector3.new(0,3,0); if CFG.tpSafe then pos = groundAt(pos).Position end
-    if not tpPathTo(pos) then tpToCFrame(CFrame.new(pos), mode) end
+-- Inicia en Movimiento
+buildTab(1)
+for j,bb in ipairs(tabButtons) do
+    bb.BackgroundColor3 = (j==1) and colors.panel or colors.tab
 end
 
--- ===== Inputs =====
-local function bindInputs()
-    disconnectAll(Conns.input)
-    safeConnect(Conns.input, UIS.InputBegan, function(i,gp)
-        if gp then return end
-        local k=i.KeyCode
-        if k==Enum.KeyCode.T then if State.noclip then noclipOff() else noclipOn() end
-        elseif k==Enum.KeyCode.F then if State.fly then flyOff() else flyOn() end
-        elseif k==Enum.KeyCode.G then if State.invisRep then invisRepOff() else invisRepOn() end
-        elseif k==Enum.KeyCode.H then if State.ghost then ghostOff() else ghostOn() end
-        elseif k==Enum.KeyCode.LeftShift then shiftHeld=true; applyWalkSpeed()
-        elseif k==Enum.KeyCode.Equals or k==Enum.KeyCode.KeypadPlus then bumpFly( CFG.stepFly)
-        elseif k==Enum.KeyCode.Minus  or k==Enum.KeyCode.KeypadMinus then bumpFly(-CFG.stepFly)
-        elseif k==Enum.KeyCode.RightBracket then bumpSprint( CFG.stepSprint)
-        elseif k==Enum.KeyCode.LeftBracket  then bumpSprint(-CFG.stepSprint)
-        elseif k==Enum.KeyCode.Period then bumpWalk( CFG.stepWalk)
-        elseif k==Enum.KeyCode.Comma  then bumpWalk(-CFG.stepWalk)
-        elseif k==Enum.KeyCode.BackSlash then toggleEngine()
-        elseif k==Enum.KeyCode.P then if _G.__USH_CMD then _G.__USH_CMD() end
-        elseif k==Enum.KeyCode.MouseButton3 then tpToMouse()
-        end
-        if k==Enum.KeyCode.Space then moveKeys.Up=true end
-        if k==Enum.KeyCode.LeftControl or k==Enum.KeyCode.C then moveKeys.Down=true end
-        if k==Enum.KeyCode.W then moveKeys.W=true end
-        if k==Enum.KeyCode.A then moveKeys.A=true end
-        if k==Enum.KeyCode.S then moveKeys.S=true end
-        if k==Enum.KeyCode.D then moveKeys.D=true end
-    end)
-    safeConnect(Conns.input, UIS.InputEnded, function(i,gp)
-        if gp then return end
-        local k=i.KeyCode
-        if k==Enum.KeyCode.LeftShift then shiftHeld=false; applyWalkSpeed()
-        elseif k==Enum.KeyCode.Space then moveKeys.Up=false
-        elseif k==Enum.KeyCode.LeftControl or k==Enum.KeyCode.C then moveKeys.Down=false
-        elseif k==Enum.KeyCode.W then moveKeys.W=false
-        elseif k==Enum.KeyCode.A then moveKeys.A=false
-        elseif k==Enum.KeyCode.S then moveKeys.S=false
-        elseif k==Enum.KeyCode.D then moveKeys.D=false
-        end
-    end)
+-- ============ Mejores interacciones táctiles ============
+-- Aumenta el padding si está en touch
+if UserInputService.TouchEnabled then
+    Root.Size = UDim2.new(0, 460, 0, 520)
 end
 
--- ===== Anti-idle =====
-do local ok, vu = pcall(function() return game:GetService("VirtualUser") end)
-    if ok and vu then safeConnect(Conns.meta, player.Idled, function() vu:Button2Down(Vector2.new(), Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame or CFrame.new()); task.wait(1); vu:Button2Up(Vector2.new(), Workspace.CurrentCamera and Workspace.CurrentCamera.CFrame or CFrame.new()) end) end
-end
+-- ============ Persistencia básica en sesión ============
+-- (ENV.USH_CFG ya persistirá mientras el ejecutor mantenga el estado)
 
--- ===== GUI (compact, con Command Palette) =====
-local UI = {}
-local function buildGUI()
-    disconnectAll(Conns.ui)
-    if UI.Screen and UI.Screen.Parent then UI.Screen:Destroy() end
-    local gui=Instance.new("ScreenGui"); gui.Name="UltraStealthHub"; gui.ResetOnSpawn=false; gui.Parent=player:WaitForChild("PlayerGui"); UI.Screen=gui
-    local frame=Instance.new("Frame"); frame.Size=UDim2.new(0,390,0,560); frame.Position=UDim2.new(0.5,-195,0.5,-280)
-    frame.BackgroundColor3=Color3.fromRGB(18,18,18); frame.BorderSizePixel=0; frame.Parent=gui; UI.Frame=frame
-    local title=Instance.new("TextLabel"); title.Size=UDim2.new(1,-80,0,26); title.Position=UDim2.new(0,10,0,8)
-    title.BackgroundTransparency=1; title.Text="Ultra Stealth Hub (Vanguard)"; title.TextColor3=Color3.new(1,1,1); title.Font=Enum.Font.GothamBold; title.TextSize=16; title.TextXAlignment=Enum.TextXAlignment.Left; title.Parent=frame
-    local close=Instance.new("TextButton"); close.Size=UDim2.new(0,60,0,24); close.Position=UDim2.new(1,-70,0,8)
-    close.Text = CFG.uiVisible and "Hide UI" or "Show UI"; close.BackgroundColor3=Color3.fromRGB(40,40,40); close.TextColor3=Color3.new(1,1,1); close.Font=Enum.Font.GothamSemibold; close.TextSize=12; close.Parent=frame
-    local pad=Instance.new("UIPadding", frame); pad.PaddingTop=UDim.new(0,40); pad.PaddingLeft=UDim.new(0,10); pad.PaddingRight=UDim.new(0,10); pad.PaddingBottom=UDim.new(0,10)
-    local list=Instance.new("UIListLayout", frame); list.Padding=UDim.new(0,8)
-
-    local function button(text, cb) local b=Instance.new("TextButton"); b.Size=UDim2.new(1,-20,0,32); b.BackgroundColor3=Color3.fromRGB(40,40,40); b.TextColor3=Color3.new(1,1,1); b.Font=Enum.Font.GothamSemibold; b.TextSize=14; b.Text=text; b.Parent=frame; b.MouseButton1Click:Connect(function() cb(b) end); return b end
-    local function counter(label, getter, inc, dec)
-        local row=Instance.new("Frame"); row.Size=UDim2.new(1,-20,0,32); row.BackgroundColor3=Color3.fromRGB(30,30,30); row.Parent=frame
-        local l=Instance.new("TextLabel"); l.Size=UDim2.new(0.5,0,1,0); l.BackgroundTransparency=1; l.Text=label; l.TextColor3=Color3.fromRGB(220,220,220); l.Font=Enum.Font.Gotham; l.TextSize=13; l.TextXAlignment=Enum.TextXAlignment.Left; l.Parent=row
-        local minus=Instance.new("TextButton"); minus.Size=UDim2.new(0,32,0,24); minus.Position=UDim2.new(0.55,0,0.5,-12); minus.Text="-"; minus.BackgroundColor3=Color3.fromRGB(60,40,40); minus.TextColor3=Color3.new(1,1,1); minus.Parent=row
-        local val=Instance.new("TextLabel"); val.Size=UDim2.new(0,80,1,0); val.Position=UDim2.new(0.68,0,0,0); val.BackgroundTransparency=1; val.Text=tostring(getter()); val.TextColor3=Color3.fromRGB(255,255,255); val.Font=Enum.Font.Gotham; val.TextSize=13; val.TextXAlignment=Enum.TextXAlignment.Center; val.Parent=row
-        local plus=Instance.new("TextButton"); plus.Size=UDim2.new(0,32,0,24); plus.Position=UDim2.new(0.88,0,0.5,-12); plus.Text="+"; plus.BackgroundColor3=Color3.fromRGB(40,60,40); plus.TextColor3=Color3.new(1,1,1); plus.Parent=row
-        minus.MouseButton1Click:Connect(function() dec(); val.Text=tostring(getter()); saveCfg() end)
-        plus.MouseButton1Click:Connect(function() inc(); val.Text=tostring(getter()); saveCfg() end)
-        return row
-    end
-    local function toggle(label, get, set)
-        local row=Instance.new("TextButton"); row.Size=UDim2.new(1,-20,0,28); row.BackgroundColor3=Color3.fromRGB(35,35,35); row.TextColor3=Color3.new(1,1,1); row.Font=Enum.Font.Gotham; row.TextSize=13; row.Parent=frame
-        local function update() row.Text = label..": "..(get() and "ON" or "OFF") end; update()
-        row.MouseButton1Click:Connect(function() set(not get()); update(); saveCfg() end)
-        return row
-    end
-
-    button("Noclip: OFF (T)", function(b) if State.noclip then noclipOff(); b.Text="Noclip: OFF (T)" else noclipOn(); b.Text="Noclip: ON  (T)" end end)
-    button("Fly: OFF (F)", function(b) if State.fly then flyOff(); b.Text="Fly: OFF (F)" else flyOn(); b.Text="Fly: ON  (F)" end end)
-    button("Sprint: OFF (Shift)", function(b) sprintToggle(); b.Text = State.sprint and "Sprint: ON  (Shift)" or "Sprint: OFF (Shift)" end)
-    button("Invis Rep: OFF (G)", function(b) if State.invisRep then invisRepOff(); b.Text="Invis Rep: OFF (G)" else invisRepOn(); b.Text="Invis Rep: ON  (G)" end end)
-    button("Ghost: OFF (H)", function(b) if State.ghost then ghostOff(); b.Text="Ghost: OFF (H)" else if State.invisRep then invisRepOff() end; ghostOn(); b.Text="Ghost: ON  (H)" end end)
-    button("Fly Engine: "..CFG.flyEngine.." (\\)", function(b) toggleEngine(); b.Text="Fly Engine: "..CFG.flyEngine.." (\\)" end)
-    toggle("Auto-Stealth", function() return State.autoStealth end, function(v) State.autoStealth=v end)
-    toggle("No-Hit Bubble (CG)", function() return CFG.dmgGuard.noHitBubble end, function(v) CFG.dmgGuard.noHitBubble=v; guardStart() end)
-    toggle("Anti-TPBack", function() return CFG.antiTeleportBack.enabled end, function(v) CFG.antiTeleportBack.enabled=v; antiTeleportBack() end)
-
-    counter("Walk speed  (,/.)", function() return math.floor(CFG.speedWalk) end, function() bumpWalk( CFG.stepWalk) end, function() bumpWalk(-CFG.stepWalk) end)
-    counter("Sprint speed  ([/])", function() return math.floor(CFG.speedSprint) end, function() bumpSprint( CFG.stepSprint) end, function() bumpSprint(-CFG.stepSprint) end)
-    counter("Fly speed  (-/=)", function() return math.floor(CFG.speedFly) end, function() bumpFly( CFG.stepFly) end, function() bumpFly(-CFG.stepFly) end)
-
-    button("TP to Mouse ("..CFG.tpMode..") [MMB]", function() tpToMouse() end)
-    button("TP Mode: "..CFG.tpMode, function(b) local order={"Snap","Tween","Blink"}; local idx=1 for i,n in ipairs(order) do if CFG.tpMode==n then idx=i end end idx=idx%#order+1; CFG.tpMode=order[idx]; b.Text="TP Mode: "..CFG.tpMode; save
+-- ============ Fin ============
