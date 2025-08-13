@@ -1,9 +1,6 @@
--- Ultra Touch GUI (Tablet) + Fallback funcional para Noclip y Velocidades
--- Luis x Copilot — Garantiza que los toggles hagan efecto aunque tu hub no exponga API.
--- - Noclip real (Stepped loop)
--- - Velocidad Walk/Sprint/Fly con aplicación directa al Humanoid
--- - Reaplica tras respawn
--- - GUI táctil grande con tabs
+-- Ultra Touch GUI (Tablet) + Fallback funcional + Aura Hit
+-- Luis x Copilot — GUI táctil, Noclip real, velocidades persistentes, y AURA HIT ajustable (4..1000)
+-- Mantiene la GUI y funciones previas. Solo se agrega el botón AURA HIT y su control de tamaño.
 
 -- ===== Servicios =====
 local Players = game:GetService("Players")
@@ -13,6 +10,7 @@ local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
 local function notify(t,d) pcall(function() StarterGui:SetCore("SendNotification",{Title="Ultra Touch",Text=t,Duration=d or 1.8}) end) end
+local function clamp(v, lo, hi) if v<lo then return lo elseif v>hi then return hi else return v end end
 
 -- ===== Entorno compartido =====
 local ENV = (getgenv and getgenv()) or _G
@@ -27,51 +25,27 @@ ENV.USH_CFG = ENV.USH_CFG or {
 ENV.USH_STATE = ENV.USH_STATE or {}
 
 -- ===== Referencias de character con auto-rebind =====
-local Conns = { char={}, noclip={}, speed={}, ui={} }
+local Conns = { char={}, noclip={}, speed={}, ui={}, aura={} }
 local char, hum, hrp
 
+local function disconnectAll(t) for _,c in ipairs(t) do pcall(function() c:Disconnect() end) end; table.clear(t) end
 local function getChar()
   local c = player.Character or player.CharacterAdded:Wait()
   return c, c:WaitForChild("Humanoid"), c:WaitForChild("HumanoidRootPart")
 end
 
-local function disconnectAll(t) for _,c in ipairs(t) do pcall(function() c:Disconnect() end) end; table.clear(t) end
+-- ===== Fallback: estado base (velocidades y noclip) =====
+ENV.USH_STATE.walkSpeed   = ENV.USH_STATE.walkSpeed   or 16
+ENV.USH_STATE.sprintSpeed = ENV.USH_STATE.sprintSpeed or 80
+ENV.USH_STATE.flySpeed    = ENV.USH_STATE.flySpeed    or 60
+ENV.USH_STATE.sprint      = ENV.USH_STATE.sprint      or false
+ENV.USH_STATE.noclip      = ENV.USH_STATE.noclip      or false
 
-local function rebindCharacter()
-  disconnectAll(Conns.char)
-  char, hum, hrp = getChar()
-  -- Restablece watchers
-  if ENV.USH_STATE._desiredSpeed then hum.WalkSpeed = ENV.USH_STATE._desiredSpeed end
-  if ENV.USH_STATE.noclip then
-    -- Reinicia noclip sobre el nuevo character
-    local function setNoCollide(model,on)
-      for _,v in ipairs(model:GetDescendants()) do
-        if v:IsA("BasePart") then v.CanCollide = not on end
-      end
-    end
-    setNoCollide(char,true)
-  end
-end
+-- ===== AURA HIT: estado base =====
+ENV.USH_STATE.aura        = ENV.USH_STATE.aura        or false
+ENV.USH_STATE.auraSize    = clamp(ENV.USH_STATE.auraSize or 8, 4, 1000)
 
-table.insert(Conns.char, player.CharacterAdded:Connect(function()
-  task.wait(0.15)
-  rebindCharacter()
-  -- Reaplica estado
-  if ENV.USH_STATE.noclip then _G.noclipOn_fallback(true) end
-  if ENV.USH_STATE._desiredSpeed then hum.WalkSpeed = ENV.USH_STATE._desiredSpeed end
-end))
-
--- ===== Fallback funcional (se usa si tu hub no expone API) =====
-local function clamp(v, lo, hi) if v<lo then return lo elseif v>hi then return hi else return v end end
-
--- Estado local de fallback
-ENV.USH_STATE.walkSpeed  = ENV.USH_STATE.walkSpeed  or 16
-ENV.USH_STATE.sprintSpeed= ENV.USH_STATE.sprintSpeed or 80
-ENV.USH_STATE.flySpeed   = ENV.USH_STATE.flySpeed   or 60
-ENV.USH_STATE.sprint     = ENV.USH_STATE.sprint     or false
-ENV.USH_STATE.noclip     = ENV.USH_STATE.noclip     or false
-
--- Mantener velocidad contra overrides
+-- ===== Velocidad: aplicación y guardia =====
 local function applyWalkSpeed()
   if not hum then return end
   local target = ENV.USH_STATE.sprint and ENV.USH_STATE.sprintSpeed or ENV.USH_STATE.walkSpeed
@@ -81,7 +55,6 @@ end
 
 local function startSpeedGuard()
   disconnectAll(Conns.speed)
-  -- Corrige si un script externo cambia WalkSpeed
   if hum then
     table.insert(Conns.speed, hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
       local target = ENV.USH_STATE._desiredSpeed
@@ -90,7 +63,6 @@ local function startSpeedGuard()
       end
     end))
   end
-  -- Pulso de seguridad (latido suave)
   table.insert(Conns.speed, RunService.Heartbeat:Connect(function()
     if hum and ENV.USH_STATE._desiredSpeed and math.abs(hum.WalkSpeed - ENV.USH_STATE._desiredSpeed) > 0.5 then
       hum.WalkSpeed = ENV.USH_STATE._desiredSpeed
@@ -98,7 +70,7 @@ local function startSpeedGuard()
   end))
 end
 
--- Noclip real (Stepped)
+-- ===== Noclip real (Stepped) =====
 local function setNoCollide(model,on)
   for _,v in ipairs(model:GetDescendants()) do
     if v:IsA("BasePart") then v.CanCollide = not on end
@@ -108,7 +80,7 @@ end
 _G.noclipOn_fallback = function(silent)
   if ENV.USH_STATE.noclip then return end
   ENV.USH_STATE.noclip = true
-  if not char or not char.Parent then rebindCharacter() end
+  if not char or not char.Parent then return end
   setNoCollide(char, true)
   disconnectAll(Conns.noclip)
   table.insert(Conns.noclip, RunService.Stepped:Connect(function()
@@ -127,7 +99,7 @@ _G.noclipOff_fallback = function(silent)
   if not silent then notify("Noclip OFF") end
 end
 
--- Exponer setters de velocidad (también como API global para la GUI)
+-- ===== Sprint fallbacks =====
 _G.setWalkSpeed_fallback = function(v)
   v = clamp(v, 8, 300)
   ENV.USH_STATE.walkSpeed = v
@@ -141,87 +113,220 @@ end
 _G.setFlySpeed_fallback = function(v)
   v = clamp(v, 10, 1200)
   ENV.USH_STATE.flySpeed = v
-  -- Si tu motor de fly usa ENV.USH_STATE.flySpeed, tomará este valor
+end
+_G.sprintOn_fallback = function() ENV.USH_STATE.sprint = true;  applyWalkSpeed(); notify("Sprint ON", 1.2) end
+_G.sprintOff_fallback= function() ENV.USH_STATE.sprint = false; applyWalkSpeed(); notify("Sprint OFF",1.2) end
+
+-- ===== AURA HIT engine =====
+local Aura = {
+  enabled = false,
+  size = ENV.USH_STATE.auraSize,     -- lado XZ (cuadrado). Min 4, max 1000.
+  thickness = 6,                      -- grosor Y seguro
+  tool = nil,
+  handle = nil,
+  saved = nil,
+}
+
+local function getEquippedTool()
+  if not char then return nil end
+  -- Busca Tool con Handle dentro del Character (equipado)
+  for _,c in ipairs(char:GetChildren()) do
+    if c:IsA("Tool") and c:FindFirstChild("Handle") and c.Handle:IsA("BasePart") then
+      return c, c.Handle
+    end
+  end
+  return nil
 end
 
-_G.sprintOn_fallback = function()
-  ENV.USH_STATE.sprint = true
-  applyWalkSpeed()
-  notify("Sprint ON", 1.2)
-end
-_G.sprintOff_fallback = function()
-  ENV.USH_STATE.sprint = false
-  applyWalkSpeed()
-  notify("Sprint OFF", 1.2)
+local function restoreHandle()
+  if Aura.handle and Aura.saved then
+    pcall(function()
+      Aura.handle.Size = Aura.saved.Size
+      Aura.handle.Massless = Aura.saved.Massless
+      Aura.handle.CanCollide = Aura.saved.CanCollide
+      if Aura.handle:IsA("BasePart") then
+        if Aura.saved.Transparency ~= nil then Aura.handle.Transparency = Aura.saved.Transparency end
+        if Aura.handle:FindFirstChildOfClass("SpecialMesh") and Aura.saved.MeshScale then
+          local sm = Aura.handle:FindFirstChildOfClass("SpecialMesh")
+          pcall(function() sm.Scale = Aura.saved.MeshScale end)
+        end
+      end
+    end)
+  end
+  Aura.saved = nil
 end
 
--- Inicializa referencias y watchers
+local function applyAuraTo(handle)
+  if not handle then return end
+  -- Guarda valores originales una vez
+  if not Aura.saved then
+    local sm = handle:FindFirstChildOfClass("SpecialMesh")
+    Aura.saved = {
+      Size = handle.Size,
+      Massless = handle.Massless,
+      CanCollide = handle.CanCollide,
+      Transparency = handle.Transparency,
+      MeshScale = sm and sm.Scale or nil
+    }
+  end
+  -- Ajusta propiedades para hitbox grande y estable
+  pcall(function()
+    handle.Massless = true
+    handle.CanCollide = false
+    handle.Transparency = Aura.saved.Transparency -- no forzamos invisibilidad; evita flags visuales
+    -- Importantísimo: el tamaño del Handle es el hitbox que muchos juegos usan para Tool.Touched
+    local s = clamp(Aura.size, 4, 1000)
+    handle.Size = Vector3.new(s, Aura.thickness, s)
+    -- Mantén la posición siguiendo la mano (RightGrip ya lo hace). Si el juego usa otra soldadura, el tamaño igual sirve.
+  end)
+end
+
+local function heartbeatAura()
+  disconnectAll(Conns.aura)
+  if not Aura.enabled then return end
+  -- Track equip/unequip y aplica tamaño continuamente
+  table.insert(Conns.aura, RunService.Heartbeat:Connect(function()
+    if not char or not char.Parent then return end
+    local t, h = getEquippedTool()
+    if t ~= Aura.tool then
+      -- Cambió el tool: restaura anterior y prepara nuevo
+      if Aura.tool or Aura.handle then restoreHandle() end
+      Aura.tool, Aura.handle = t, h
+      if Aura.handle then applyAuraTo(Aura.handle) end
+    else
+      -- Igual tool: refresca tamaño por si cambió el slider
+      if Aura.handle then applyAuraTo(Aura.handle) end
+    end
+  end))
+  -- También escucha equip/des-equip explícito
+  table.insert(Conns.aura, char.ChildAdded:Connect(function(obj)
+    if obj:IsA("Tool") and Aura.enabled then
+      task.defer(function()
+        local _, h = getEquippedTool()
+        if h then applyAuraTo(h) end
+      end)
+    end
+  end))
+  table.insert(Conns.aura, char.ChildRemoved:Connect(function(obj)
+    if obj == Aura.tool then
+      restoreHandle()
+      Aura.tool, Aura.handle = nil, nil
+    end
+  end))
+end
+
+local function auraOn()
+  if Aura.enabled then return end
+  Aura.enabled = true
+  ENV.USH_STATE.aura = true
+  heartbeatAura()
+  notify("AURA HIT ON", 1.2)
+end
+
+local function auraOff()
+  if not Aura.enabled then return end
+  Aura.enabled = false
+  ENV.USH_STATE.aura = false
+  disconnectAll(Conns.aura)
+  restoreHandle()
+  Aura.tool, Aura.handle = nil, nil
+  notify("AURA HIT OFF", 1.2)
+end
+
+local function setAuraSize(v)
+  Aura.size = clamp(math.floor(v+0.5), 4, 1000)
+  ENV.USH_STATE.auraSize = Aura.size
+  -- En el próximo Heartbeat se re-aplica a handle si existe
+end
+
+-- Exponer fallbacks para la GUI (en caso tu hub no los tenga)
+_G.auraOn_fallback      = auraOn
+_G.auraOff_fallback     = auraOff
+_G.setAuraSize_fallback = setAuraSize
+
+-- ===== Rebind character y reaplicar estados =====
+local function rebindCharacter()
+  disconnectAll(Conns.char)
+  char, hum, hrp = getChar()
+  applyWalkSpeed()
+  if ENV.USH_STATE.noclip then _G.noclipOn_fallback(true) end
+  -- Reaplica AURA si está ON
+  if ENV.USH_STATE.aura then
+    Aura.tool, Aura.handle = nil, nil
+    heartbeatAura()
+  end
+end
+
+table.insert(Conns.char, player.CharacterAdded:Connect(function()
+  task.wait(0.15)
+  rebindCharacter()
+end))
+
+-- ===== Inicialización base =====
 rebindCharacter()
 applyWalkSpeed()
 startSpeedGuard()
 
 -- ===== Detección de API de tu hub (si existe) =====
--- Intentamos usar tu hub primero; si no, usamos estos fallback.
 local EXPOSED = ENV.USH or ENV.USE or ENV.STEALTH or ENV.HUB or ENV
-
 local API = {
   Noclip = {
-    get = function()
-      return (EXPOSED.State and EXPOSED.State.noclip) or ENV.USH_STATE.noclip
-    end,
-    on  = function()
-      if typeof(EXPOSED.noclipOn)=="function" then EXPOSED.noclipOn() else _G.noclipOn_fallback() end
-    end,
-    off = function()
-      if typeof(EXPOSED.noclipOff)=="function" then EXPOSED.noclipOff() else _G.noclipOff_fallback() end
-    end,
-    desc = "Atravesar objetos",
+    get = function() return (EXPOSED.State and EXPOSED.State.noclip) or ENV.USH_STATE.noclip end,
+    on  = function() if typeof(EXPOSED.noclipOn)=="function" then EXPOSED.noclipOn() else _G.noclipOn_fallback() end end,
+    off = function() if typeof(EXPOSED.noclipOff)=="function" then EXPOSED.noclipOff() else _G.noclipOff_fallback() end end,
+    desc="Atravesar objetos",
   },
   Sprint = {
-    get = function()
-      return (EXPOSED.State and EXPOSED.State.sprint) or ENV.USH_STATE.sprint
-    end,
-    on  = function()
-      if typeof(EXPOSED.sprintOn)=="function" then EXPOSED.sprintOn() else _G.sprintOn_fallback() end
-    end,
-    off = function()
-      if typeof(EXPOSED.sprintOff)=="function" then EXPOSED.sprintOff() else _G.sprintOff_fallback() end
-    end,
-    desc = "Correr más rápido",
+    get = function() return (EXPOSED.State and EXPOSED.State.sprint) or ENV.USH_STATE.sprint end,
+    on  = function() if typeof(EXPOSED.sprintOn)=="function" then EXPOSED.sprintOn() else _G.sprintOn_fallback() end end,
+    off = function() if typeof(EXPOSED.sprintOff)=="function" then EXPOSED.sprintOff() else _G.sprintOff_fallback() end end,
+    desc="Correr más rápido",
   },
   Fly = {
     get = function() return (EXPOSED.State and EXPOSED.State.fly) or (ENV.USH_STATE.fly or false) end,
     on  = function() if typeof(EXPOSED.flyOn)=="function" then EXPOSED.flyOn() else notify("Conecta tu Fly del hub") end end,
     off = function() if typeof(EXPOSED.flyOff)=="function" then EXPOSED.flyOff() else notify("Conecta tu Fly del hub") end end,
-    desc = "Vuelo libre",
+    desc="Vuelo libre",
   },
   Invis = {
     get = function() return (EXPOSED.State and EXPOSED.State.invisRep) or (ENV.USH_STATE.invisRep or false) end,
     on  = function() if typeof(EXPOSED.invisRepOn)=="function" then EXPOSED.invisRepOn() else notify("Conecta InvisRep del hub") end end,
     off = function() if typeof(EXPOSED.invisRepOff)=="function" then EXPOSED.invisRepOff() else notify("Conecta InvisRep del hub") end end,
-    desc = "Invisibilidad replicada",
+    desc="Invisibilidad replicada",
   },
   Ghost = {
     get = function() return (EXPOSED.State and EXPOSED.State.ghost) or (ENV.USH_STATE.ghost or false) end,
     on  = function() if typeof(EXPOSED.ghostOn)=="function" then EXPOSED.ghostOn() else notify("Conecta Ghost del hub") end end,
     off = function() if typeof(EXPOSED.ghostOff)=="function" then EXPOSED.ghostOff() else notify("Conecta Ghost del hub") end end,
-    desc = "Colisión fantasma",
+    desc="Colisión fantasma",
   },
   -- Speeds
   WalkSpeed = {
-    get = function() return (EXPOSED.State and EXPOSED.State.walkSpeed) or ENV.USH_STATE.walkSpeed end,
+    get = function() return (EXPOSED.State and (EXPOSED.State.walkSpeed or EXPOSED.State.speedWalk)) or ENV.USH_STATE.walkSpeed end,
     set = function(v) if typeof(EXPOSED.setWalkSpeed)=="function" then EXPOSED.setWalkSpeed(v) else _G.setWalkSpeed_fallback(v) end end,
     min=8,max=300,step=2, desc="Velocidad caminar",
   },
   SprintSpeed = {
-    get = function() return (EXPOSED.State and EXPOSED.State.sprintSpeed) or ENV.USH_STATE.sprintSpeed end,
+    get = function() return (EXPOSED.State and (EXPOSED.State.sprintSpeed or EXPOSED.State.speedSprint)) or ENV.USH_STATE.sprintSpeed end,
     set = function(v) if typeof(EXPOSED.setSprintSpeed)=="function" then EXPOSED.setSprintSpeed(v) else _G.setSprintSpeed_fallback(v) end end,
     min=16,max=800,step=5, desc="Velocidad sprint",
   },
   FlySpeed = {
-    get = function() return (EXPOSED.State and EXPOSED.State.flySpeed) or ENV.USH_STATE.flySpeed end,
+    get = function() return (EXPOSED.State and (EXPOSED.State.flySpeed or EXPOSED.State.speedFly)) or ENV.USH_STATE.flySpeed end,
     set = function(v) if typeof(EXPOSED.setFlySpeed)=="function" then EXPOSED.setFlySpeed(v) else _G.setFlySpeed_fallback(v) end end,
     min=10,max=1200,step=10, desc="Velocidad vuelo",
+  },
+  -- Aura Hit
+  Aura = {
+    get = function() return (EXPOSED.State and EXPOSED.State.aura) or ENV.USH_STATE.aura end,
+    on  = function() if typeof(EXPOSED.auraOn)=="function" then EXPOSED.auraOn() else _G.auraOn_fallback() end end,
+    off = function() if typeof(EXPOSED.auraOff)=="function" then EXPOSED.auraOff() else _G.auraOff_fallback() end end,
+    desc="Amplía el rango del Tool al golpear",
+  },
+  AuraSize = {
+    get = function() return (EXPOSED.State and (EXPOSED.State.auraSize)) or ENV.USH_STATE.auraSize end,
+    set = function(v) if typeof(EXPOSED.setAuraSize)=="function" then EXPOSED.setAuraSize(v) else _G.setAuraSize_fallback(v) end end,
+    min=4,max=1000,step=10, desc="Tamaño del área (studs)",
   },
 }
 
@@ -235,7 +340,7 @@ local UIScale = New("UIScale",{Scale=ENV.USH_CFG.uiScale or 1.0}); UIScale.Paren
 local Root = New("Frame",{
   BackgroundColor3=Color3.fromRGB(20,20,24),
   BackgroundTransparency = 1 - (ENV.USH_CFG.opacity or 0.92),
-  Size=UDim2.new(0,460,0,520),
+  Size=UDim2.new(0,460,0,560),
   Position=UDim2.fromScale(ENV.USH_CFG.guiPos[1] or 0.06, ENV.USH_CFG.guiPos[2] or 0.16)
 })
 Root.Parent=Screen
@@ -265,7 +370,7 @@ end)
 
 -- Contenido con tabs simples
 local Tabs = New("Frame",{BackgroundColor3=Color3.fromRGB(34,34,42),Size=UDim2.new(1,0,0,40),Position=UDim2.new(0,0,0,50)}); Tabs.Parent=Root
-local Body = New("ScrollingFrame",{BackgroundTransparency=1,Size=UDim2.new(1,0,1,-90),Position=UDim2.new(0,0,0,90),ScrollBarThickness=6}); Body.Parent=Root
+local Body = New("ScrollingFrame",{BackgroundTransparency=1,Size=UDim2.new(1,0,1,-100),Position=UDim2.new(0,0,0,90),ScrollBarThickness=6}); Body.Parent=Root
 local Layout = New("UIListLayout",{Padding=UDim.new(0,10),SortOrder=Enum.SortOrder.LayoutOrder}); Layout.Parent=Body
 local Pad = New("UIPadding",{PaddingLeft=UDim.new(0,12),PaddingRight=UDim.new(0,12),PaddingTop=UDim.new(0,12),PaddingBottom=UDim.new(0,12)}); Pad.Parent=Body
 local function updateCanvas() Body.CanvasSize = UDim2.new(0,0,0,Layout.AbsoluteContentSize.Y+24) end
@@ -317,7 +422,6 @@ local function makeStepper(name, desc, getFn, setFn, min, max, step)
 end
 
 -- Tabs (Movimiento / Stealth / Ajustes)
-local tabIndex = 1
 local function clearBody() for _,g in ipairs(Body:GetChildren()) do if g:IsA("GuiObject") then g:Destroy() end end end
 local function buildMovimiento()
   makeToggle("Noclip", "Atravesar objetos", API.Noclip.get, API.Noclip.on, API.Noclip.off)
@@ -327,6 +431,10 @@ local function buildMovimiento()
   makeStepper("WalkSpeed", "Velocidad al caminar", API.WalkSpeed.get, API.WalkSpeed.set, API.WalkSpeed.min, API.WalkSpeed.max, API.WalkSpeed.step)
   makeStepper("SprintSpeed", "Velocidad en sprint", API.SprintSpeed.get, API.SprintSpeed.set, API.SprintSpeed.min, API.SprintSpeed.max, API.SprintSpeed.step)
   makeStepper("FlySpeed", "Velocidad de vuelo (referencia)", API.FlySpeed.get, API.FlySpeed.set, API.FlySpeed.min, API.FlySpeed.max, API.FlySpeed.step)
+
+  -- NUEVO: AURA HIT
+  makeToggle("AURA HIT", "Amplía el área del golpe (Tool Handle)", API.Aura.get, API.Aura.on, API.Aura.off)
+  makeStepper("Aura Size", "Tamaño del área (4..1000 studs)", API.AuraSize.get, API.AuraSize.set, API.AuraSize.min, API.AuraSize.max, API.AuraSize.step)
 end
 local function buildStealth()
   makeToggle("Invis", "Invisibilidad replicada (si tu hub la tiene)", API.Invis.get, API.Invis.on, API.Invis.off)
@@ -348,6 +456,7 @@ local function buildAjustes()
   rec.MouseButton1Click:Connect(function() Root.Position=UDim2.fromScale(0.06,0.16); ENV.USH_CFG.guiPos={0.06,0.16}; Screen.Enabled=true end)
 end
 
+local tabIndex = 1
 local function buildTab(i)
   clearBody()
   if i==1 then buildMovimiento()
@@ -368,5 +477,4 @@ tabBtn("Stealth",   136, 2)
 tabBtn("Ajustes",   264, 3)
 buildTab(1)
 
--- Listo
-notify("GUI táctil lista. Noclip y velocidad funcionando.", 2)
+notify("GUI táctil lista. Noclip, velocidad y
