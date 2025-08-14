@@ -47,7 +47,7 @@ local S = ENV.UMH_STATE
 local Conns = {char={}, aura={}, click={}}
 local function disconnectAll(t) for _,c in ipairs(t) do pcall(function() c:Disconnect() end) end table.clear(t) end
 
--- Character helpers
+-- Helpers de personaje y herramientas
 local char, hum, hrp
 local function getChar()
     local c = LP.Character or LP.CharacterAdded:Wait()
@@ -56,8 +56,6 @@ end
 local function isAlive(h) return h and h.Health and h.Health > 0 end
 local function dot(a,b) return a.X*b.X + a.Y*b.Y + a.Z*b.Z end
 local function angle(a,b) local m=(a.Magnitude*b.Magnitude) if m==0 then return 180 end return math.deg(math.acos(math.clamp(dot(a,b)/m,-1,1))) end
-
--- Tool helpers
 local function toolEquipped()
     if not char then return end
     for _,t in ipairs(char:GetChildren()) do
@@ -193,9 +191,7 @@ table.insert(Conns.click, UIS.InputBegan:Connect(function(i,gp)
     end
 end))
 
--- GUI minimal
+-- ===== GUI =====
 local function New(c,p,children) local o=Instance.new(c) for k,v in pairs(p or {}) do o[k]=v end if children then for _,ch in ipairs(children) do ch.Parent=o end end return o end
 local Screen = New("ScreenGui",{Name="UltraMinimalGUI",ResetOnSpawn=false,IgnoreGuiInset=true,ZIndexBehavior=Enum.ZIndexBehavior.Global,DisplayOrder=999999})
-Screen.Parent = LP:WaitForChild("PlayerGui")
-
-local Root = New("Frame",{Name="Root",BackgroundColor3=Color3.fromRGB(
+Screen.Parent = LP:WaitForChild
