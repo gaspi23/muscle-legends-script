@@ -1,8 +1,7 @@
--- 📦 UI + AutoHit Modular
+-- 📦 Servicios
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
 
 -- ⚙️ Variables
 local autoHitEnabled = false
@@ -39,57 +38,91 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- 🖥️ UI Panel
-local ScreenGui = Instance.new("ScreenGui", game.CoreGui)
-local Frame = Instance.new("Frame", ScreenGui)
-Frame.Size = UDim2.new(0, 220, 0, 140)
-Frame.Position = UDim2.new(0, 20, 0, 100)
-Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-Frame.BorderSizePixel = 0
-Frame.Active = true
-Frame.Draggable = true
+local gui = Instance.new("ScreenGui", game.CoreGui)
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 240, 0, 180)
+frame.Position = UDim2.new(0, 20, 0, 100)
+frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
 
-local Title = Instance.new("TextLabel", Frame)
-Title.Size = UDim2.new(1, 0, 0, 30)
-Title.Text = "⚔️ AutoHit Hub"
-Title.TextColor3 = Color3.new(1, 1, 1)
-Title.BackgroundTransparency = 1
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 18
+local title = Instance.new("TextLabel", frame)
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Text = "⚔️ AutoHit Hub"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.TextSize = 18
 
-local Toggle = Instance.new("TextButton", Frame)
-Toggle.Size = UDim2.new(0, 200, 0, 30)
-Toggle.Position = UDim2.new(0, 10, 0, 40)
-Toggle.Text = "Activar AutoHit: OFF"
-Toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-Toggle.TextColor3 = Color3.new(1, 1, 1)
-Toggle.Font = Enum.Font.Gotham
-Toggle.TextSize = 16
+local toggle = Instance.new("TextButton", frame)
+toggle.Size = UDim2.new(0, 220, 0, 30)
+toggle.Position = UDim2.new(0, 10, 0, 40)
+toggle.Text = "Activar AutoHit: OFF"
+toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+toggle.TextColor3 = Color3.new(1, 1, 1)
+toggle.Font = Enum.Font.Gotham
+toggle.TextSize = 16
 
-Toggle.MouseButton1Click:Connect(function()
+toggle.MouseButton1Click:Connect(function()
     autoHitEnabled = not autoHitEnabled
-    Toggle.Text = "Activar AutoHit: " .. (autoHitEnabled and "ON" or "OFF")
+    toggle.Text = "Activar AutoHit: " .. (autoHitEnabled and "ON" or "OFF")
 end)
 
-local SliderLabel = Instance.new("TextLabel", Frame)
-SliderLabel.Size = UDim2.new(0, 200, 0, 20)
-SliderLabel.Position = UDim2.new(0, 10, 0, 80)
-SliderLabel.Text = "Reach: " .. reach
-SliderLabel.TextColor3 = Color3.new(1, 1, 1)
-SliderLabel.BackgroundTransparency = 1
-SliderLabel.Font = Enum.Font.Gotham
-SliderLabel.TextSize = 14
+local reachLabel = Instance.new("TextLabel", frame)
+reachLabel.Size = UDim2.new(0, 220, 0, 20)
+reachLabel.Position = UDim2.new(0, 10, 0, 75)
+reachLabel.Text = "Reach: " .. reach
+reachLabel.TextColor3 = Color3.new(1, 1, 1)
+reachLabel.BackgroundTransparency = 1
+reachLabel.Font = Enum.Font.Gotham
+reachLabel.TextSize = 14
 
-local Slider = Instance.new("TextButton", Frame)
-Slider.Size = UDim2.new(0, 200, 0, 20)
-Slider.Position = UDim2.new(0, 10, 0, 105)
-Slider.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-Slider.Text = "⬅️ Ajustar Reach ⮕"
-Slider.TextColor3 = Color3.new(1, 1, 1)
-Slider.Font = Enum.Font.Gotham
-Slider.TextSize = 14
+local minus = Instance.new("TextButton", frame)
+minus.Size = UDim2.new(0, 30, 0, 20)
+minus.Position = UDim2.new(0, 10, 0, 100)
+minus.Text = "-"
+minus.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+minus.TextColor3 = Color3.new(1, 1, 1)
+minus.Font = Enum.Font.Gotham
+minus.TextSize = 14
 
-Slider.MouseButton1Click:Connect(function()
-    reach = reach + 5
-    if reach > 50 then reach = 10 end
-    SliderLabel.Text = "Reach: " .. reach
+minus.MouseButton1Click:Connect(function()
+    reach = math.max(1, reach - 1)
+    reachLabel.Text = "Reach: " .. reach
+end)
+
+local plus = Instance.new("TextButton", frame)
+plus.Size = UDim2.new(0, 30, 0, 20)
+plus.Position = UDim2.new(0, 50, 0, 100)
+plus.Text = "+"
+plus.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+plus.TextColor3 = Color3.new(1, 1, 1)
+plus.Font = Enum.Font.Gotham
+plus.TextSize = 14
+
+plus.MouseButton1Click:Connect(function()
+    reach = reach + 1
+    reachLabel.Text = "Reach: " .. reach
+end)
+
+local inputBox = Instance.new("TextBox", frame)
+inputBox.Size = UDim2.new(0, 130, 0, 20)
+inputBox.Position = UDim2.new(0, 90, 0, 100)
+inputBox.PlaceholderText = "Escribe reach manual..."
+inputBox.Text = ""
+inputBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+inputBox.TextColor3 = Color3.new(1, 1, 1)
+inputBox.Font = Enum.Font.Gotham
+inputBox.TextSize = 14
+
+inputBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        local val = tonumber(inputBox.Text)
+        if val and val >= 1 then
+            reach = val
+            reachLabel.Text = "Reach: " .. reach
+            inputBox.Text = ""
+        end
+    end
 end)
